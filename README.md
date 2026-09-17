@@ -1,36 +1,67 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Invoice AI — Virtual Secretary
 
-## Getting Started
+A simple, modern invoicing web app with Firestore as the database and an AI assistant ("virtual secretary") that can create invoices, manage inventory, and manage customers through chat — in addition to full manual CRUD via the UI.
 
-First, run the development server:
+## Features
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- **Dashboard** — revenue, invoice count, inventory count, low-stock warnings, recent invoices.
+- **Invoices** — manual creation UI + AI chat creation, editable with a required reason, full audit log (before/after) for every AI or manual edit.
+- **Inventory** — manual CRUD; stock is automatically deducted when an invoice is created or edited.
+- **Customers** — manual CRUD; auto-created by the AI when invoicing a new customer.
+- **AI secretary** (bottom-right chat button) — can:
+  - Parse natural language requests to build invoices, computing line totals and the grand total.
+  - Ask you for missing quantity/price before adding a line item.
+  - Search inventory before creating a new item, and **must ask for confirmation** if a similar item name already exists, instead of silently creating a duplicate.
+  - Deduct stock automatically when an invoice is created.
+  - Edit invoices, always writing a reasoned entry to the audit log.
+
+## Setup
+
+1. **Install dependencies** (already done if you're reading this after scaffolding):
+   ```bash
+   npm install
+   ```
+2. **Create a Firebase project** at https://console.firebase.google.com, enable **Firestore Database** (start in test mode for local development), then add a Web App and copy its config values.
+3. **Copy the env template** and fill in your Firebase + OpenAI values:
+   ```bash
+   cp .env.local.example .env.local
+   ```
+   - `NEXT_PUBLIC_FIREBASE_*` — from Firebase Console > Project settings > General > Your apps.
+   - `OPENAI_API_KEY` — required for the AI chat assistant (`/api/chat`). Without it, the rest of the app (manual CRUD) still works, but chat will show a configuration error.
+4. **Run the dev server**:
+   ```bash
+   npm run dev
+   ```
+   Open http://localhost:3000.
+
+### Firestore security rules
+
+This prototype uses the Firestore client SDK directly (including from the AI's API route) for simplicity. Before going beyond local testing, lock down rules, e.g.:
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null; // add real auth + rules per collection
+    }
+  }
+}
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Data model (Firestore collections)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- `items` — inventory: name, sku, price, quantity, unit.
+- `customers` — name, email, phone, address.
+- `invoices` — number, customerId/customerName, lineItems[], subtotal/tax/total, status, createdBy.
+- `invoiceLogs` — invoiceId, actor (`ai`/`user`), action, message, before/after snapshots.
+- `counters` — sequential invoice numbering.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Project structure
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `src/lib/firebase.ts` — Firebase client init.
+- `src/lib/store.ts` — Firestore reads/writes, including transactional invoice create/update with stock reconciliation and logging.
+- `src/lib/ai/tools.ts` — tool definitions + executor used by the AI assistant.
+- `src/app/api/chat/route.ts` — agentic loop calling OpenAI with tool calling.
+- `src/components/ChatPanel.tsx` — the chat UI (bottom-right "Ask AI" drawer).
+- `src/app/*` — Dashboard, Invoices, Inventory, Customers pages.

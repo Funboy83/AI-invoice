@@ -1,0 +1,16 @@
+rules_version = '2';
+
+// TEMPORARY / DEV-ONLY: no Firebase Auth is implemented yet, and the Next.js
+// server itself uses the unauthenticated client SDK (no firebase-admin), so
+// these rules must stay open for the app to function. Anyone who has the
+// public NEXT_PUBLIC_FIREBASE_* config (visible in the browser bundle) can
+// read and write ALL data in this database while these rules are in place.
+// Lock this down (and switch server-side access to firebase-admin, which
+// bypasses these rules via a service account) before any real deployment.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
