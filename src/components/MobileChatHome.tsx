@@ -17,7 +17,8 @@ export default function MobileChatHome() {
   const showQuickActions = messages.length <= 1;
 
   return (
-    <div className="md:hidden fixed inset-0 z-30 flex flex-col bg-white pt-[env(safe-area-inset-top)]">
+    // bottom offset must match BottomNav's height (3.25rem) so the input bar isn't covered by it
+    <div className="md:hidden fixed inset-x-0 top-0 bottom-[calc(3.25rem+env(safe-area-inset-bottom))] z-30 flex flex-col bg-white pt-[env(safe-area-inset-top)]">
       <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200">
         <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-600 text-white">
           <Bot size={18} />
@@ -77,7 +78,7 @@ export default function MobileChatHome() {
         )}
       </div>
 
-      <div className="border-t border-slate-200 p-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
+      <div className="border-t border-slate-200 p-3">
         <div className="flex items-end gap-2">
           <textarea
             value={input}
