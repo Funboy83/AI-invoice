@@ -172,7 +172,7 @@ export const toolDefinitions = [
   {
     name: "createInvoiceDraft",
     description:
-      "Create a new DRAFT invoice for a customer with one or more line items, parsed from a (possibly messy Vietnamese) order message. Each item is matched against the product catalog by name/alias. If a customer or product doesn't clearly match, this returns needs_confirmation/needs_new_customer/needs_new_product and you must resolve it (ask the user, or create the entity) before retrying. Quantity is always required; price falls back to last price charged to this customer, then the product default price, with a warning if ambiguous — application code always computes totals, never trust your own math.",
+      "Create a new DRAFT invoice for a customer with one or more line items, parsed from a (possibly messy Vietnamese) order message. All amounts are USD. Each item is matched against the product catalog by name/alias. If a customer or product doesn't clearly match, this returns needs_confirmation/needs_new_customer/needs_new_product and you must resolve it (ask the user, or create the entity) before retrying. Quantity and price are preferred but NOT required — if either can't be determined (no quantity in the text, and no last/default price available), the line is saved as-is and marked incomplete; the invoice is still created (as an incomplete temp draft) rather than rejected, and the result lists incompleteItems for you to relay to the user. Price otherwise falls back to last price charged to this customer, then the product default price, with a warning if ambiguous — application code always computes totals, never trust your own math.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -189,11 +189,10 @@ export const toolDefinitions = [
             properties: {
               productId: { type: "string" },
               productName: { type: "string" },
-              quantity: { type: "number" },
+              quantity: { type: "number", description: "Omit if unknown from the order text — the item will be marked incomplete." },
               unit: { type: "string" },
-              price: { type: "number" },
+              price: { type: "number", description: "USD. Omit to fall back to last/default price." },
             },
-            required: ["quantity"],
           },
         },
       },
@@ -578,14 +577,9 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
       const priceWarnings: string[] = [];
 
       for (const raw of rawItems) {
-        const quantity = raw.quantity !== undefined ? Number(raw.quantity) : undefined;
-        if (!quantity || quantity <= 0) {
-          return {
-            status: "needs_more_info",
-            message: `Missing or invalid quantity for "${raw.productName ?? raw.productId}". Ask the user for the quantity.`,
-            resolvedSoFar: resolvedItems,
-          };
-        }
+        const quantityGiven = raw.quantity !== undefined ? Number(raw.quantity) : undefined;
+        const quantityMissing = !quantityGiven || quantityGiven <= 0;
+        const quantity = quantityMissing ? 0 : (quantityGiven as number);
 
         let product: Product | null = null;
         if (raw.productId) {
@@ -615,6 +609,7 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
 
         const lastPrice = customer ? await getLastPriceForCustomerProduct(customer.id, product.id) : null;
         let price: number;
+        let priceMissing = false;
         if (raw.price !== undefined) {
           price = Number(raw.price);
           if (lastPrice !== null && Math.abs(lastPrice - price) > 0.01) {
@@ -623,9 +618,18 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         } else if (lastPrice !== null) {
           price = lastPrice;
           priceWarnings.push(`${product.name}: no price given, used this customer's last price $${lastPrice}.`);
-        } else {
+        } else if (product.defaultPrice > 0) {
           price = product.defaultPrice;
           priceWarnings.push(`${product.name}: no price given, used catalog default $${product.defaultPrice}.`);
+        } else {
+          price = 0;
+          priceMissing = true;
+          priceWarnings.push(`${product.name}: no price given and no price history/default — saved as $0, needs a price.`);
+        }
+
+        const incomplete = quantityMissing || priceMissing;
+        if (quantityMissing) {
+          priceWarnings.push(`${product.name}: no quantity given — saved with quantity 0, needs a quantity.`);
         }
 
         resolvedItems.push({
@@ -636,6 +640,7 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
           price,
           lineTotal: Math.round(price * quantity * 100) / 100,
           barcode: product.barcode,
+          incomplete,
         });
       }
 
@@ -652,7 +657,19 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         actor: "ai",
       });
 
-      return { status: "created", invoice, priceWarnings };
+      const incompleteItems = resolvedItems.filter((it) => it.incomplete).map((it) => it.productName);
+      return {
+        status: "created",
+        invoice,
+        priceWarnings,
+        incompleteItems,
+        ...(incompleteItems.length > 0
+          ? {
+              message:
+                "Saved as an INCOMPLETE temp draft because some items are missing quantity and/or price. Tell the user which item(s) need quantity/price, and that they should either provide the missing info (then use updateInvoiceItem to fill it in) or say if the order is wrong so you can delete it (updateInvoice with status=void).",
+            }
+          : {}),
+      };
     }
 
     case "getInvoice": {

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { watchProducts, watchCustomers, watchInvoices } from "@/lib/store";
-import type { Product, Customer, Invoice } from "@/lib/types";
+import { isInvoiceIncomplete, type Product, type Customer, type Invoice } from "@/lib/types";
 import { FileText, Boxes, Users, AlertTriangle } from "lucide-react";
 import MobileChatHome from "@/components/MobileChatHome";
 
@@ -41,6 +41,7 @@ function DashboardContent() {
   const outstanding = invoices
     .filter((i) => i.paymentStatus === "unpaid" || i.paymentStatus === "partial")
     .reduce((s, i) => s + i.balance, 0);
+  const incompleteDrafts = invoices.filter(isInvoiceIncomplete);
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-8">
@@ -51,7 +52,7 @@ function DashboardContent() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Total invoices" value={String(invoices.length)} icon={FileText} />
-        <StatCard label="Revenue" value={`$${revenue.toFixed(2)}`} icon={FileText} />
+        <StatCard label="Revenue (USD)" value={`$${revenue.toFixed(2)}`} icon={FileText} />
         <StatCard label="Products" value={String(products.length)} icon={Boxes} />
         <StatCard label="Customers" value={String(customers.length)} icon={Users} />
       </div>
@@ -62,6 +63,29 @@ function DashboardContent() {
           <div className="text-sm text-amber-800">
             <p className="font-medium">Outstanding balance</p>
             <p className="mt-0.5">${outstanding.toFixed(2)} across unpaid/partial invoices.</p>
+          </div>
+        </div>
+      )}
+
+      {incompleteDrafts.length > 0 && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
+          <AlertTriangle size={18} className="text-amber-600 mt-0.5" />
+          <div className="text-sm text-amber-800">
+            <p className="font-medium">
+              {incompleteDrafts.length} incomplete temp {incompleteDrafts.length === 1 ? "draft" : "drafts"}
+            </p>
+            <p className="mt-0.5">
+              Missing quantity/price on some items — open{" "}
+              {incompleteDrafts.slice(0, 3).map((inv, i) => (
+                <span key={inv.id}>
+                  {i > 0 && ", "}
+                  <Link href={`/invoices/${inv.id}`} className="underline">
+                    #{inv.invoiceNumber}
+                  </Link>
+                </span>
+              ))}{" "}
+              to finish or void it.
+            </p>
           </div>
         </div>
       )}

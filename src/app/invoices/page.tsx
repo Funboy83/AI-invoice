@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { watchInvoices, watchProducts, watchCustomers, createInvoice, createCustomer, createProduct } from "@/lib/store";
-import type { Invoice, Product, Customer, InvoiceLineItem } from "@/lib/types";
-import { Plus, X, Trash2 } from "lucide-react";
+import { isInvoiceIncomplete, type Invoice, type Product, type Customer, type InvoiceLineItem } from "@/lib/types";
+import { Plus, X, Trash2, AlertTriangle } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
 
 const statusStyles: Record<string, string> = {
@@ -157,8 +157,8 @@ export default function InvoicesPage() {
               <th className="text-left px-5 py-3 font-medium">Number</th>
               <th className="text-left px-5 py-3 font-medium">Customer</th>
               <th className="text-left px-5 py-3 font-medium">Date</th>
-              <th className="text-right px-5 py-3 font-medium">Total</th>
-              <th className="text-right px-5 py-3 font-medium">Balance</th>
+              <th className="text-right px-5 py-3 font-medium">Total (USD)</th>
+              <th className="text-right px-5 py-3 font-medium">Balance (USD)</th>
               <th className="text-left px-5 py-3 font-medium">Status</th>
             </tr>
           </thead>
@@ -176,6 +176,11 @@ export default function InvoicesPage() {
                   <span className={`text-[11px] uppercase font-medium px-2 py-0.5 rounded-full ${statusStyles[inv.paymentStatus]}`}>
                     {inv.paymentStatus}
                   </span>
+                  {isInvoiceIncomplete(inv) && (
+                    <span className="ml-1.5 inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                      <AlertTriangle size={11} /> incomplete
+                    </span>
+                  )}
                 </td>
               </tr>
             ))}
@@ -204,6 +209,11 @@ export default function InvoicesPage() {
                 {inv.paymentStatus}
               </span>
             </div>
+            {isInvoiceIncomplete(inv) && (
+              <p className="flex items-center gap-1 text-[11px] font-medium text-amber-700 mt-1">
+                <AlertTriangle size={11} /> Incomplete — missing quantity/price
+              </p>
+            )}
             <div className="flex items-center justify-between mt-2 text-sm">
               <span className="text-slate-500">{new Date(inv.date).toLocaleDateString()}</span>
               <span className="font-semibold text-slate-900">${inv.total.toFixed(2)}</span>

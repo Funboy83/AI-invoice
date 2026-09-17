@@ -38,6 +38,8 @@ export interface InvoiceLineItem {
   price: number;
   lineTotal: number;
   barcode?: string;
+  /** True when quantity and/or price couldn't be determined when the AI parsed the order. */
+  incomplete?: boolean;
 }
 
 export type InvoiceStatus = "draft" | "unpaid" | "partial" | "paid" | "void";
@@ -90,4 +92,9 @@ export interface InvoiceLog {
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+/** A draft invoice with any line missing quantity/price — needs the user to finish it or delete (void) it. */
+export function isInvoiceIncomplete(invoice: Invoice): boolean {
+  return invoice.paymentStatus === "draft" && invoice.items.some((it) => it.incomplete);
 }

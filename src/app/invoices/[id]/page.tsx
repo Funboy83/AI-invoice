@@ -12,7 +12,8 @@ import {
   createProduct,
 } from "@/lib/store";
 import type { Invoice, InvoiceLog, InvoiceLineItem, Product, InvoiceStatus, Payment } from "@/lib/types";
-import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign } from "lucide-react";
+import { isInvoiceIncomplete } from "@/lib/types";
+import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign, AlertTriangle } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
 
 const statusStyles: Record<string, string> = {
@@ -202,6 +203,19 @@ export default function InvoiceDetailPage() {
           </span>
         </div>
 
+        {isInvoiceIncomplete(invoice) && (
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 print:hidden">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium">Incomplete temp draft — not ready to finalize</p>
+              <p className="mt-0.5 text-amber-700">
+                Missing quantity and/or price for: {invoice.items.filter((it) => it.incomplete).map((it) => it.productName).join(", ")}.
+                Edit the item(s) to finish it, or set Status to Void below to delete this draft.
+              </p>
+            </div>
+          </div>
+        )}
+
         {invoice.originalOrderText && !editing && (
           <details className="mt-4 text-xs text-slate-500 print:hidden">
             <summary className="cursor-pointer select-none">Original message</summary>
@@ -218,14 +232,23 @@ export default function InvoiceDetailPage() {
                     <th className="text-left py-2 font-medium">Item</th>
                     <th className="text-right py-2 font-medium">Qty</th>
                     <th className="text-left py-2 font-medium">Unit</th>
-                    <th className="text-right py-2 font-medium">Price</th>
-                    <th className="text-right py-2 font-medium">Total</th>
+                    <th className="text-right py-2 font-medium">Price (USD)</th>
+                    <th className="text-right py-2 font-medium">Total (USD)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {invoice.items.map((li, idx) => (
-                    <tr key={idx}>
-                      <td className="py-2.5 text-slate-800">{li.productName}</td>
+                    <tr key={idx} className={li.incomplete ? "bg-amber-50" : undefined}>
+                      <td className="py-2.5 text-slate-800">
+                        {li.productName}
+                        {li.incomplete && (
+                          <span className="ml-1.5 inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 align-middle">
+                            missing {li.quantity <= 0 ? "qty" : ""}
+                            {li.quantity <= 0 && li.price <= 0 ? "/" : ""}
+                            {li.price <= 0 ? "price" : ""}
+                          </span>
+                        )}
+                      </td>
                       <td className="py-2.5 text-right text-slate-600">{li.quantity}</td>
                       <td className="py-2.5 text-slate-600">{li.unit}</td>
                       <td className="py-2.5 text-right text-slate-600">${li.price.toFixed(2)}</td>
@@ -237,9 +260,12 @@ export default function InvoiceDetailPage() {
               {/* Mobile stacked cards */}
               <div className="md:hidden space-y-2">
                 {invoice.items.map((li, idx) => (
-                  <div key={idx} className="flex items-center justify-between rounded-xl border border-slate-100 p-3">
+                  <div key={idx} className={`flex items-center justify-between rounded-xl border p-3 ${li.incomplete ? "border-amber-200 bg-amber-50" : "border-slate-100"}`}>
                     <div>
-                      <p className="text-sm font-medium text-slate-900">{li.productName}</p>
+                      <p className="text-sm font-medium text-slate-900">
+                        {li.productName}
+                        {li.incomplete && <span className="ml-1.5 text-[10px] font-medium text-amber-700">(incomplete)</span>}
+                      </p>
                       <p className="text-xs text-slate-500">
                         {li.quantity} {li.unit} × ${li.price.toFixed(2)}
                       </p>
