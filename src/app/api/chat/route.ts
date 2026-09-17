@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
   );
 
   const actions: { tool: string; result: unknown }[] = [];
-  const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5-20250929";
+  const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
   // Agentic tool-use loop: keep letting Claude call tools until it produces a
   // final text reply (capped to avoid runaway loops).
