@@ -270,7 +270,7 @@ async function nextInvoiceNumber(): Promise<string> {
   const counterRef = doc(countersCol, "invoiceCounter");
   const next = await runTransaction(db, async (tx) => {
     const snap = await tx.get(counterRef);
-    const current = snap.exists() ? (snap.data().value as number) : 1337;
+    const current = snap.exists() ? (snap.data().value as number) : 1999;
     const value = current + 1;
     tx.set(counterRef, { value }, { merge: true });
     return value;

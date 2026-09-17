@@ -16,6 +16,8 @@ import { isInvoiceIncomplete } from "@/lib/types";
 import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign, AlertTriangle } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
 
+const COMPANY_NAME = process.env.NEXT_PUBLIC_COMPANY_NAME || "Company Name";
+
 const statusStyles: Record<string, string> = {
   draft: "bg-slate-100 text-slate-600",
   unpaid: "bg-blue-100 text-blue-700",
@@ -191,7 +193,7 @@ export default function InvoiceDetailPage() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 print:border-0 print:shadow-none">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 print:hidden">
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-xl font-semibold text-slate-900">Invoice #{invoice.invoiceNumber}</h1>
@@ -431,6 +433,63 @@ export default function InvoiceDetailPage() {
         )}
 
         {invoice.notes && !editing && <p className="mt-4 text-sm text-slate-500 border-t border-slate-100 pt-3">{invoice.notes}</p>}
+      </div>
+
+      {/* Print-only classic invoice layout — kept separate from the screen UI above. */}
+      <div className="hidden print:block text-black">
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">INVOICE</h1>
+            <p className="text-sm font-semibold mt-1">{COMPANY_NAME}</p>
+          </div>
+          <div className="text-right text-xs leading-5">
+            <p>
+              <span className="font-semibold">Invoice No:</span> {invoice.invoiceNumber}
+            </p>
+            <p>
+              <span className="font-semibold">Date:</span> {new Date(invoice.date).toISOString().slice(0, 10)}
+            </p>
+          </div>
+        </div>
+        <hr className="my-3 border-black" />
+
+        <div className="mt-2">
+          <p className="text-xs font-semibold">Bill To:</p>
+          <p className="text-sm">{invoice.customerName}</p>
+        </div>
+
+        <table className="w-full mt-4 text-xs border-collapse border border-black">
+          <thead>
+            <tr>
+              <th className="border border-black py-1 px-1 w-10">NO</th>
+              <th className="border border-black py-1 px-1 w-14">QTY</th>
+              <th className="border border-black py-1 px-2 text-left">DESCRIPTION</th>
+              <th className="border border-black py-1 px-2 w-24">UNIT PRICE</th>
+              <th className="border border-black py-1 px-2 w-24">AMOUNT</th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoice.items.map((li, idx) => (
+              <tr key={idx}>
+                <td className="border border-black text-center py-1">{idx + 1}</td>
+                <td className="border border-black text-center py-1">{li.quantity}</td>
+                <td className="border border-black px-2 py-1">{li.productName}</td>
+                <td className="border border-black text-right px-2 py-1">${li.price.toFixed(2)}</td>
+                <td className="border border-black text-right px-2 py-1">${li.lineTotal.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        <div className="flex justify-between items-start mt-6">
+          <div className="text-xs max-w-xs">
+            <p className="font-semibold">Notes:</p>
+            <p className="mt-0.5">{invoice.notes || "Thank you for your business! Payment is due within 30 days."}</p>
+          </div>
+          <div className="border-2 border-black px-4 py-2">
+            <p className="font-bold text-sm">TOTAL: ${invoice.total.toFixed(2)}</p>
+          </div>
+        </div>
       </div>
 
       {payments.length > 0 && (
