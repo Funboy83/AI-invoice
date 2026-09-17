@@ -37,12 +37,25 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const messages: Anthropic.Messages.MessageParam[] = (body.messages ?? []).map(
-    (m: { role: "user" | "assistant"; content: string }) => ({ role: m.role, content: m.content })
-  );
+  const rawMessages: { role: "user" | "assistant"; content: string }[] = body.messages ?? [];
+  // Cap how much history we resend — without this, every message re-sends the ENTIRE
+  // conversation so far and cost grows unbounded as a chat session gets longer.
+  const HISTORY_LIMIT = 40;
+  const messages: Anthropic.Messages.MessageParam[] = rawMessages
+    .slice(-HISTORY_LIMIT)
+    .map((m) => ({ role: m.role, content: m.content }));
 
   const actions: { tool: string; result: unknown }[] = [];
   const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
+
+  // The system prompt and tool schemas are byte-identical on every request, so mark them
+  // as cacheable — Anthropic charges ~10% of input price for a cache hit instead of full price.
+  const system: Anthropic.Messages.TextBlockParam[] = [
+    { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+  ];
+  const cachedTools = toolDefinitions.map((t, i) =>
+    i === toolDefinitions.length - 1 ? { ...t, cache_control: { type: "ephemeral" as const } } : t
+  );
 
   // Agentic tool-use loop: keep letting Claude call tools until it produces a
   // final text reply (capped to avoid runaway loops).
@@ -50,8 +63,8 @@ export async function POST(req: NextRequest) {
     const response = await client.messages.create({
       model,
       max_tokens: 2048,
-      system: SYSTEM_PROMPT,
-      tools: toolDefinitions,
+      system,
+      tools: cachedTools,
       messages,
     });
 
