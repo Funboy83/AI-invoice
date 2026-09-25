@@ -6,26 +6,37 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "bench:orders": "vitest run --config vitest.bench.config.ts",
+    "members:add": "node scripts/manage-members.mjs add",
+    "members:remove": "node scripts/manage-members.mjs remove",
+    "members:list": "node scripts/manage-members.mjs list",
+    "test:emulator": "firebase emulators:exec --project demo-invoice-ai-taskb \"vitest run --config vitest.emulator.config.ts\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.126.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "firebase": "^12.19.0",
+    "firebase-admin": "^14.4.0",
     "lucide-react": "^1.46.0",
     "next": "16.3.5",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
+    "firebase-tools": "^15.31.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   }
 }

@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { watchProducts, createProduct, updateProduct } from "@/lib/store";
+import { watchProducts } from "@/lib/store";
+import { createProductApi, updateProductApi } from "@/lib/businessApi";
+import { useActionId } from "@/lib/useActionId";
+import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Product } from "@/lib/types";
 import { Plus, Pencil, X } from "lucide-react";
 
@@ -12,6 +15,8 @@ interface FormState {
   defaultUnit: string;
   defaultPrice: string;
   cost: string;
+  /** Blank = stock untracked for this product; invoicing never reads/adjusts it. */
+  quantity: string;
   category: string;
   barcode: string;
   notes: string;
@@ -24,6 +29,7 @@ const emptyForm: FormState = {
   defaultUnit: "thùng",
   defaultPrice: "",
   cost: "",
+  quantity: "",
   category: "",
   barcode: "",
   notes: "",
@@ -31,15 +37,20 @@ const emptyForm: FormState = {
 };
 
 export default function ProductsPage() {
+  const { authedFetch, notifyPossibleRevocation } = useAppAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const saveAction = useActionId(); // one stable id per open of the modal, reused across retries of THIS save
 
-  useEffect(() => watchProducts(setProducts), []);
+  useEffect(() => watchProducts(setProducts, (err) => isPermissionDenied(err) && notifyPossibleRevocation()), [notifyPossibleRevocation]);
 
   function openCreate() {
     setForm(emptyForm);
+    setError("");
+    saveAction.start();
     setModalOpen(true);
   }
 
@@ -51,45 +62,62 @@ export default function ProductsPage() {
       defaultUnit: p.defaultUnit,
       defaultPrice: String(p.defaultPrice),
       cost: p.cost !== undefined ? String(p.cost) : "",
+      quantity: p.quantity !== undefined ? String(p.quantity) : "",
       category: p.category ?? "",
       barcode: p.barcode ?? "",
       notes: p.notes ?? "",
       active: p.active,
     });
+    setError("");
+    saveAction.start();
     setModalOpen(true);
   }
 
   async function handleSave() {
     if (!form.name || form.defaultPrice === "") return;
     setSaving(true);
+    setError("");
     const aliases = form.aliases
       .split(",")
       .map((a) => a.trim())
       .filter(Boolean);
     try {
       if (form.id) {
-        await updateProduct(form.id, {
-          name: form.name,
-          defaultUnit: form.defaultUnit,
-          defaultPrice: Number(form.defaultPrice),
-          cost: form.cost ? Number(form.cost) : undefined,
-          category: form.category,
-          notes: form.notes,
-          active: form.active,
-        });
+        await updateProductApi(
+          authedFetch,
+          form.id,
+          {
+            name: form.name,
+            defaultUnit: form.defaultUnit,
+            defaultPrice: Number(form.defaultPrice),
+            cost: form.cost ? Number(form.cost) : undefined,
+            quantity: form.quantity !== "" ? Number(form.quantity) : undefined,
+            category: form.category,
+            notes: form.notes,
+            active: form.active,
+          },
+          saveAction.current()
+        );
       } else {
-        await createProduct({
-          name: form.name,
-          aliases,
-          defaultUnit: form.defaultUnit,
-          defaultPrice: Number(form.defaultPrice),
-          cost: form.cost ? Number(form.cost) : undefined,
-          category: form.category,
-          barcode: form.barcode,
-          notes: form.notes,
-        });
+        await createProductApi(
+          authedFetch,
+          {
+            name: form.name,
+            aliases,
+            defaultUnit: form.defaultUnit,
+            defaultPrice: Number(form.defaultPrice),
+            cost: form.cost ? Number(form.cost) : undefined,
+            quantity: form.quantity !== "" ? Number(form.quantity) : undefined,
+            category: form.category,
+            barcode: form.barcode,
+            notes: form.notes,
+          },
+          saveAction.current()
+        );
       }
       setModalOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save product.");
     } finally {
       setSaving(false);
     }
@@ -119,6 +147,7 @@ export default function ProductsPage() {
               <th className="text-left px-5 py-3 font-medium">Aliases</th>
               <th className="text-right px-5 py-3 font-medium">Price</th>
               <th className="text-left px-5 py-3 font-medium">Unit</th>
+              <th className="text-right px-5 py-3 font-medium">Stock</th>
               <th className="text-left px-5 py-3 font-medium">Category</th>
               <th className="px-5 py-3"></th>
             </tr>
@@ -139,6 +168,9 @@ export default function ProductsPage() {
                 </td>
                 <td className="px-5 py-3 text-right text-slate-900">${p.defaultPrice.toFixed(2)}</td>
                 <td className="px-5 py-3 text-slate-500">{p.defaultUnit}</td>
+                <td className={`px-5 py-3 text-right ${p.quantity !== undefined && p.quantity < 0 ? "text-red-600 font-medium" : "text-slate-500"}`}>
+                  {p.quantity !== undefined ? p.quantity : "—"}
+                </td>
                 <td className="px-5 py-3 text-slate-500">{p.category || "—"}</td>
                 <td className="px-5 py-3 text-right">
                   <button onClick={() => openEdit(p)} className="text-slate-400 hover:text-indigo-600">
@@ -149,7 +181,7 @@ export default function ProductsPage() {
             ))}
             {products.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-5 py-10 text-center text-slate-400">
+                <td colSpan={7} className="px-5 py-10 text-center text-slate-400">
                   No products yet. Add one manually, or paste an order to the AI and it will offer to create it.
                 </td>
               </tr>
@@ -173,6 +205,9 @@ export default function ProductsPage() {
             <p className="text-xs text-slate-500 mt-0.5">
               {p.defaultUnit}
               {p.category ? ` · ${p.category}` : ""}
+              {p.quantity !== undefined && (
+                <span className={p.quantity < 0 ? "text-red-600 font-medium" : undefined}> · stock: {p.quantity}</span>
+              )}
             </p>
             {p.aliases.length > 0 && (
               <div className="flex flex-wrap gap-1 mt-2">
@@ -256,6 +291,20 @@ export default function ProductsPage() {
                   />
                 </div>
               </div>
+              <div>
+                <label className="text-xs font-medium text-slate-600">Stock quantity (leave blank to not track stock)</label>
+                <input
+                  type="number"
+                  step="1"
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  value={form.quantity}
+                  onChange={(e) => setForm({ ...form, quantity: e.target.value })}
+                  placeholder="Untracked"
+                />
+                <p className="mt-1 text-[11px] text-slate-400">
+                  When set, stock is automatically deducted when this product is on a finalized invoice, and restored if the invoice is voided or the line is removed.
+                </p>
+              </div>
               {!form.id && (
                 <div>
                   <label className="text-xs font-medium text-slate-600">Barcode (optional)</label>
@@ -285,6 +334,7 @@ export default function ProductsPage() {
                   Active
                 </label>
               )}
+              {error && <p className="text-sm text-red-600">{error}</p>}
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button

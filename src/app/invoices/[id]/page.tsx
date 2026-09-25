@@ -1,16 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import {
-  getInvoice,
-  watchInvoiceLogs,
-  watchProducts,
-  updateInvoiceWithLog,
-  recordPayment,
-  getPaymentsForInvoice,
-  createProduct,
-} from "@/lib/store";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { getInvoice, watchInvoiceLogs, watchProducts, getPaymentsForInvoice } from "@/lib/store";
+import { updateInvoiceApi, recordPaymentApi, createProductApi, newOperationId } from "@/lib/businessApi";
+import { useActionId } from "@/lib/useActionId";
+import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Invoice, InvoiceLog, InvoiceLineItem, Product, InvoiceStatus, Payment } from "@/lib/types";
 import { isInvoiceIncomplete } from "@/lib/types";
 import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign, AlertTriangle } from "lucide-react";
@@ -29,11 +24,17 @@ const statusStyles: Record<string, string> = {
 export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const { authedFetch, notifyPossibleRevocation } = useAppAuth();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<InvoiceLog[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [stockWarnings, setStockWarnings] = useState<string[]>(() => {
+    const raw = searchParams.get("stockWarning");
+    return raw ? raw.split(" | ") : [];
+  });
 
   const [editing, setEditing] = useState(false);
   const [draftItems, setDraftItems] = useState<InvoiceLineItem[]>([]);
@@ -49,25 +50,40 @@ export default function InvoiceDetailPage() {
   const [payMethod, setPayMethod] = useState("");
   const [payOpen, setPayOpen] = useState(false);
 
+  // Two independent actions on this page, each with its OWN stable retry id — editing and paying must never share one.
+  const editAction = useActionId();
+  const payAction = useActionId();
+
   async function load() {
     setLoading(true);
-    const [inv, pays] = await Promise.all([getInvoice(id), getPaymentsForInvoice(id)]);
-    setInvoice(inv);
-    setPayments(pays);
-    setLoading(false);
+    try {
+      const [inv, pays] = await Promise.all([getInvoice(id), getPaymentsForInvoice(id)]);
+      setInvoice(inv);
+      setPayments(pays);
+    } catch (e) {
+      if (isPermissionDenied(e)) notifyPossibleRevocation();
+    } finally {
+      setLoading(false);
+    }
   }
+
+  useEffect(() => {
+    if (searchParams.get("stockWarning")) router.replace(`/invoices/${id}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async load, not a derived-state anti-pattern
     load();
-    const u1 = watchInvoiceLogs(id, setLogs);
-    const u2 = watchProducts(setProducts);
+    const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
+    const u1 = watchInvoiceLogs(id, setLogs, onErr);
+    const u2 = watchProducts(setProducts, onErr);
     return () => {
       u1();
       u2();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, notifyPossibleRevocation]);
 
   function startEdit() {
     if (!invoice) return;
@@ -78,6 +94,7 @@ export default function InvoiceDetailPage() {
     setDraftNotes(invoice.notes ?? "");
     setReason("");
     setError("");
+    editAction.start();
     setEditing(true);
   }
 
@@ -102,7 +119,8 @@ export default function InvoiceDetailPage() {
 
   async function handleCreateProductForDraftLine(idx: number, name: string) {
     const line = draftItems[idx];
-    const product = await createProduct({ name, defaultPrice: line?.price || 0, defaultUnit: line?.unit || "thùng" });
+    // A one-shot quick-add (no retry affordance in this UI) — its own fresh id, independent of the edit's own.
+    const product = await createProductApi(authedFetch, { name, defaultPrice: line?.price || 0, defaultUnit: line?.unit || "thùng" }, newOperationId());
     updateLine(idx, { productId: product.id, productName: product.name, price: product.defaultPrice, unit: product.defaultUnit });
   }
 
@@ -119,16 +137,20 @@ export default function InvoiceDetailPage() {
     setSaving(true);
     setError("");
     try {
-      await updateInvoiceWithLog({
-        invoiceId: invoice.id,
-        items: draftItems,
-        shipping: Number(draftShipping) || 0,
-        discount: Number(draftDiscount) || 0,
-        status: draftStatus,
-        notes: draftNotes,
-        actor: "user",
-        reason: reason.trim(),
-      });
+      const { stockWarnings: warnings } = await updateInvoiceApi(
+        authedFetch,
+        invoice.id,
+        {
+          items: draftItems,
+          shipping: Number(draftShipping) || 0,
+          discount: Number(draftDiscount) || 0,
+          status: draftStatus,
+          notes: draftNotes,
+          reason: reason.trim(),
+        },
+        editAction.current()
+      );
+      setStockWarnings(warnings ?? []);
       setEditing(false);
       await load();
     } catch (e) {
@@ -141,12 +163,16 @@ export default function InvoiceDetailPage() {
   async function submitPayment() {
     if (!invoice || !payAmount || Number(payAmount) <= 0) return;
     setSaving(true);
+    setError("");
     try {
-      await recordPayment({ invoiceId: invoice.id, amount: Number(payAmount), method: payMethod, actor: "user" });
+      const { stockWarnings: warnings } = await recordPaymentApi(authedFetch, invoice.id, Number(payAmount), payMethod, payAction.current());
+      setStockWarnings(warnings ?? []);
       setPayOpen(false);
       setPayAmount("");
       setPayMethod("");
       await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to record payment.");
     } finally {
       setSaving(false);
     }
@@ -176,7 +202,11 @@ export default function InvoiceDetailPage() {
           </button>
           {!editing && (
             <button
-              onClick={() => setPayOpen(true)}
+              onClick={() => {
+                setError("");
+                payAction.start();
+                setPayOpen(true);
+              }}
               className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
               <DollarSign size={14} /> Record payment
@@ -204,6 +234,20 @@ export default function InvoiceDetailPage() {
             {invoice.paymentStatus}
           </span>
         </div>
+
+        {stockWarnings.length > 0 && (
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 print:hidden">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+            <div>
+              <p className="font-medium">Stock warning</p>
+              <ul className="mt-0.5 text-amber-700 list-disc list-inside">
+                {stockWarnings.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        )}
 
         {isInvoiceIncomplete(invoice) && (
           <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 print:hidden">
@@ -550,6 +594,7 @@ export default function InvoiceDetailPage() {
                   placeholder="cash, zelle, venmo…"
                 />
               </div>
+              {error && <p className="text-sm text-red-600">{error}</p>}
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button onClick={() => setPayOpen(false)} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100">

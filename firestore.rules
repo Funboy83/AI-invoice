@@ -1,16 +1,65 @@
 rules_version = '2';
 
-// TEMPORARY / DEV-ONLY: no Firebase Auth is implemented yet, and the Next.js
-// server itself uses the unauthenticated client SDK (no firebase-admin), so
-// these rules must stay open for the app to function. Anyone who has the
-// public NEXT_PUBLIC_FIREBASE_* config (visible in the browser bundle) can
-// read and write ALL data in this database while these rules are in place.
-// Lock this down (and switch server-side access to firebase-admin, which
-// bypasses these rules via a service account) before any real deployment.
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+
+    // ---- Store membership: the ONE administrator-controlled access source -----------------------------------
+    // Written ONLY by scripts/manage-members.mjs (Admin SDK, run locally by whoever holds the service-account
+    // key) — never by the app, never by any client, never by any HTTP endpoint. A signed-in user may read only
+    // their OWN membership doc (harmless self-check; no one can enumerate or see who else has access). This
+    // collection is what `isMember()` below checks, and it's also what src/lib/server/auth.ts checks on every
+    // authenticated server request — the SAME source, so there is exactly one place membership is decided, not
+    // two lists that can drift apart.
+    //
+    // STORE_ID must match APP_STORE_ID (defaults to "main"; see .env.local.example). There is exactly one
+    // configured store — this is not multi-tenant isolation, just a guard against a stale/misconfigured doc
+    // silently granting access under the wrong store context.
+    function STORE_ID() { return "main"; }
+
+    function isMember() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/storeMembers/$(request.auth.uid))
+        && get(/databases/$(database)/documents/storeMembers/$(request.auth.uid)).data.storeId == STORE_ID();
     }
+
+    match /storeMembers/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    // ---- Chat (durable AI jobs): private to the signed-in owner, AND requires CURRENT membership ---------------
+    // Everything under chatConversations / chatJobs is written ONLY by the server (Admin SDK bypasses these
+    // rules; src/lib/server/auth.ts requires membership before the server will ever create or advance one of
+    // these on someone's behalf). The signed-in owner may read just their own transcript — which also carries
+    // each job's live status — but ONLY while still a member: a chat transcript routinely contains invoice
+    // numbers, customer names, balances and other business information (order text, tool results), so leaving it
+    // readable after revocation would keep exposing exactly the business data revocation is meant to cut off.
+    // Reauthorization (the same uid added back to storeMembers) restores read access immediately, with nothing to
+    // recreate — the conversation itself was never touched. The chatConversations doc itself, chatJobs and all
+    // their other subcollections stay closed (default deny).
+    match /chatConversations/{conversationId}/messages/{messageId} {
+      allow read: if isMember()
+        && get(/databases/$(database)/documents/chatConversations/$(conversationId)).data.ownerUid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // ---- Business data: real-time reads for members, no direct browser writes at all -------------------------
+    // Products/customers/invoices/invoiceLogs/payments are shared by every member of the one configured store —
+    // this is intentionally NOT per-user isolated, matching src/lib/server/membership.ts's single-store design.
+    // Reads stay on the client SDK (real-time onSnapshot, as before); every mutation now goes through an
+    // authenticated, validated /api/business/* route or an AI tool call, both backed by
+    // src/lib/server/businessStore.ts (Admin SDK, bypasses these rules by design — the server's OWN membership
+    // check in src/lib/server/auth.ts / src/lib/server/agentRunner.ts is what stands in for rules there).
+    match /products/{id}     { allow read: if isMember(); allow write: if false; }
+    match /customers/{id}    { allow read: if isMember(); allow write: if false; }
+    match /invoices/{id}     { allow read: if isMember(); allow write: if false; }
+    match /invoiceLogs/{id}  { allow read: if isMember(); allow write: if false; }
+    match /payments/{id}     { allow read: if isMember(); allow write: if false; }
+
+    // ---- Internal-only: nothing in the app ever reads these from the browser ----------------------------------
+    // `counters` (invoice numbering) and `operations` (the idempotency ledger) are implementation details of
+    // businessStore.ts's transactions — closed entirely, not even readable, since no legitimate UI need exists.
+    match /counters/{id}     { allow read, write: if false; }
+    match /operations/{id}   { allow read, write: if false; }
   }
 }

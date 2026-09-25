@@ -4,6 +4,9 @@ import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import ChatPanel from "@/components/ChatPanel";
 import BottomNav from "@/components/BottomNav";
+import RequireAuth from "@/components/RequireAuth";
+import { AppAuthProvider } from "@/lib/useAppAuth";
+import { AiChatProvider } from "@/lib/useAiChat";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -53,10 +56,22 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full h-full flex bg-slate-50 text-slate-900 overscroll-none">
-        <Sidebar />
-        <main className="flex-1 min-w-0 overflow-y-auto">{children}</main>
-        <ChatPanel />
-        <BottomNav />
+        <AppAuthProvider>
+          <Sidebar />
+          {/*
+            Business pages AND the chat UI mount only once RequireAuth confirms store membership — gating both
+            behind the same check, since an approved account gets both, and a denied one gets neither. AiChatProvider
+            lives INSIDE the gate so logout/account-switch/revocation unmount it too, clearing its state and
+            detaching its Firestore listener automatically (see RequireAuth.tsx).
+          */}
+          <RequireAuth>
+            <AiChatProvider>
+              <main className="flex-1 min-w-0 overflow-y-auto">{children}</main>
+              <ChatPanel />
+            </AiChatProvider>
+          </RequireAuth>
+          <BottomNav />
+        </AppAuthProvider>
       </body>
     </html>
   );

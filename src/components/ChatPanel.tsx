@@ -1,19 +1,21 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useState } from "react";
 import { Bot, Send, X, Sparkles, Loader2 } from "lucide-react";
 import clsx from "clsx";
-import { useAiChat, actionSummary } from "@/lib/useAiChat";
+import { useAiChat } from "@/lib/useAiChat";
+import { useAppAuth } from "@/lib/useAppAuth";
+import ChatThread from "./ChatThread";
 
-/** Desktop-only floating AI chat drawer. On mobile the AI is the full-screen home tab instead (see MobileChatHome). */
+/**
+ * Desktop-only floating AI chat drawer. On mobile the AI is the full-screen home tab instead (see MobileChatHome).
+ * Rendered only inside RequireAuth (layout.tsx), so it can assume it's always authorized — no loading/signedOut/
+ * denied branches needed here.
+ */
 export default function ChatPanel() {
   const [open, setOpen] = useState(false);
-  const { messages, input, setInput, loading, send } = useAiChat();
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, open]);
+  const { email, signOut } = useAppAuth();
+  const { input, setInput, send, busy } = useAiChat();
 
   return (
     <>
@@ -22,8 +24,8 @@ export default function ChatPanel() {
           onClick={() => setOpen(true)}
           className="hidden md:flex fixed bottom-6 right-6 z-40 items-center gap-2 rounded-full bg-indigo-600 px-5 py-3 text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700 transition-colors"
         >
-          <Sparkles size={18} />
-          <span className="text-sm font-medium">Ask AI</span>
+          {busy ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
+          <span className="text-sm font-medium">{busy ? "Đang xử lý…" : "Ask AI"}</span>
         </button>
       )}
 
@@ -43,44 +45,17 @@ export default function ChatPanel() {
               <p className="text-[11px] text-slate-500">Invoices · Products · Customers</p>
             </div>
           </div>
-          <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-700">
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-3">
+            <button onClick={() => signOut()} title={email ?? undefined} className="text-[11px] text-slate-400 hover:text-slate-700">
+              Đăng xuất
+            </button>
+            <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-700">
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-          {messages.map((m, i) => (
-            <div key={i} className={clsx("flex", m.role === "user" ? "justify-end" : "justify-start")}>
-              <div
-                className={clsx(
-                  "max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm whitespace-pre-wrap leading-relaxed",
-                  m.role === "user" ? "bg-indigo-600 text-white rounded-br-sm" : "bg-slate-100 text-slate-800 rounded-bl-sm"
-                )}
-              >
-                {m.content}
-                {m.actions && m.actions.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {m.actions.map((a, idx) => (
-                      <span
-                        key={idx}
-                        className="rounded-full bg-white/70 border border-slate-300 px-2 py-0.5 text-[10px] font-medium text-slate-600"
-                      >
-                        {actionSummary(a.tool, a.result)}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          {loading && (
-            <div className="flex justify-start">
-              <div className="flex items-center gap-2 rounded-2xl bg-slate-100 px-3.5 py-2.5 text-sm text-slate-500">
-                <Loader2 size={14} className="animate-spin" /> đang xử lý…
-              </div>
-            </div>
-          )}
-        </div>
+        <ChatThread variant="desktop" scrollKey={open} />
 
         <div className="border-t border-slate-200 p-3">
           <div className="flex items-end gap-2">
@@ -99,7 +74,7 @@ export default function ChatPanel() {
             />
             <button
               onClick={() => send()}
-              disabled={loading || !input.trim()}
+              disabled={!input.trim()}
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white disabled:opacity-40 hover:bg-indigo-700"
             >
               <Send size={16} />
@@ -110,4 +85,3 @@ export default function ChatPanel() {
     </>
   );
 }
-
