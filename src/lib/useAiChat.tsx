@@ -5,6 +5,7 @@ import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestor
 import { db } from "./firebase";
 import { useAppAuth, isPermissionDenied } from "./useAppAuth";
 import type { ChatMessageDoc, ClientJobStatus, JobView } from "./chat/types";
+import { isSafeChatHref, type ChatLink } from "./chat/links";
 
 /** One row in the conversation, as the UI draws it. */
 export interface ThreadItem {
@@ -24,6 +25,8 @@ export interface ThreadItem {
   awaitingAnswer?: boolean;
   kind?: ChatMessageDoc["kind"];
   actions?: { tool: string; result: unknown }[];
+  /** Shortcut buttons to the records this reply is about. */
+  links?: ChatLink[];
   /** Failed job that can be retried from the checkpoint. */
   retryJobId?: string;
 }
@@ -266,6 +269,7 @@ export function AiChatProvider({ children }: { children: ReactNode }) {
           order: d.order,
           kind: d.kind,
           actions: d.actions,
+          links: Array.isArray(d.links) ? d.links.filter((l) => isSafeChatHref(l?.href) && typeof l.label === "string") : undefined,
           awaitingAnswer: d.kind === "question" && d.order > lastUserOrder,
           // Only the newest job can be retried (older ones would run out of order).
           retryJobId: d.kind === "error" && d.jobSeq === lastSeq && jobById.get(d.jobId)?.failure?.retryable !== false ? d.jobId : undefined,
@@ -338,3 +342,52 @@ export const QUICK_ACTIONS = [
   "Tìm khách hàng ",
   "Tìm sản phẩm ",
 ];
+
+/**
+ * Suggested next step after a reply, like KiotViet's quick buttons. `send: true` sends right away (only for
+ * questions that just read data); everything else is put in the box so she can check or finish it before sending.
+ */
+export interface FollowUp {
+  label: string;
+  text: string;
+  send: boolean;
+}
+
+const INVOICE_EDIT_TOOLS = new Set(["createInvoiceDraft", "copyInvoice", "addInvoiceItem", "updateInvoiceItem", "removeInvoiceItem"]);
+
+export function followUpsFor(actions: { tool: string; result: unknown }[] | undefined): FollowUp[] {
+  const ok = (actions ?? []).filter((a) => {
+    const st = (a.result as { status?: unknown } | null)?.status;
+    return st !== "error" && st !== "needs_confirmation" && st !== "needs_more_info" && st !== "awaiting_user";
+  });
+  const last = ok[ok.length - 1]?.tool;
+  if (!last) return [];
+  if (INVOICE_EDIT_TOOLS.has(last)) {
+    return [
+      { label: "Hoàn tất invoice này", text: "Hoàn tất invoice này", send: false },
+      { label: "Thêm món", text: "Thêm ", send: false },
+      { label: "Khách trả tiền", text: "Khách trả ", send: false },
+    ];
+  }
+  if (last === "finalizeInvoice") {
+    return [
+      { label: "Khách trả tiền", text: "Khách trả ", send: false },
+      { label: "Khách này còn nợ bao nhiêu?", text: "Khách này còn nợ bao nhiêu?", send: true },
+    ];
+  }
+  if (last === "recordPayment") return [{ label: "Khách này còn nợ bao nhiêu?", text: "Khách này còn nợ bao nhiêu?", send: true }];
+  if (last === "getCustomerDebt") {
+    return [
+      { label: "Khách trả tiền", text: "Khách trả ", send: false },
+      { label: "Tạo invoice cho khách này", text: "Tạo invoice cho khách này: ", send: false },
+    ];
+  }
+  if (last === "getUnpaidInvoices") return [{ label: "Ai nợ nhiều nhất?", text: "Khách nào đang nợ nhiều nhất?", send: true }];
+  if (last === "createCustomer" || last === "getCustomer" || last === "searchCustomer") {
+    return [
+      { label: "Tạo invoice cho khách này", text: "Tạo invoice cho khách này: ", send: false },
+      { label: "Khách này còn nợ bao nhiêu?", text: "Khách này còn nợ bao nhiêu?", send: true },
+    ];
+  }
+  return [];
+}

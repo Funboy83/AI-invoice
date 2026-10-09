@@ -31,7 +31,7 @@ export default function ChatPanel() {
 
       <div
         className={clsx(
-          "hidden md:flex fixed inset-y-0 right-0 z-50 w-full max-w-sm bg-white border-l border-slate-200 shadow-2xl flex-col transition-transform duration-200",
+          "hidden md:flex fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white border-l border-slate-200 shadow-2xl flex-col transition-transform duration-200",
           open ? "translate-x-0" : "translate-x-full"
         )}
       >

@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "node:crypto";
 import { toolDefinitions, executeTool, MUTATING_TOOLS, operationIdFor, type ToolContext } from "@/lib/ai/tools";
 import { SYSTEM_PROMPT } from "@/lib/ai/systemPrompt";
+import { collectLinks, linksForToolResult, type ChatLink } from "@/lib/chat/links";
 import { ConfigError, getAdminDb } from "./firebaseAdmin";
 import { isMember } from "./membership";
 import { dispatchContinuation } from "./dispatch";
@@ -505,6 +506,8 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
   );
   const messages: Anthropic.Messages.MessageParam[] = history.map((m) => ({ role: m.role, content: m.content }));
   const actions: { tool: string; result: { status?: string } }[] = [];
+  const linkGroups: ChatLink[][] = [];
+  const links = () => collectLinks(linkGroups);
   let previousStepCalls: ToolCallDoc[] = [];
 
   // The system prompt and tool schemas are identical on every request, so mark them cacheable.
@@ -586,7 +589,7 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
     if (uses.length === 0) {
       // Final reply. If the last tools left a question open, this job is waiting for her, not done.
       const waiting = previousStepCalls.some(isBlocking);
-      await finish(rc, { status: waiting ? "waiting_for_input" : "completed", text: textOf(content), actions });
+      await finish(rc, { status: waiting ? "waiting_for_input" : "completed", text: textOf(content), actions, links: links() });
       return "finished";
     }
 
@@ -651,6 +654,7 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
     let question: string | null = null;
     stepCalls.forEach((call, idx) => {
       actions.push({ tool: call.name, result: call.resultStatus ? { status: call.resultStatus } : {} });
+      linkGroups.push(linksForToolResult(call.name, safeParse(call.inputJson), safeParse(call.resultJson)));
       if (uses[idx].name === "requestUserInput") question = String((uses[idx].input as { question?: unknown })?.question ?? "").trim();
     });
 
@@ -658,7 +662,7 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
       const preface = textOf(content);
       const q: string = question;
       const text = preface && q && !preface.includes(q) ? `${preface}\n\n${q}` : preface || q;
-      await finish(rc, { status: "waiting_for_input", text: text || "Mình cần bạn xác nhận thêm để tiếp tục.", actions });
+      await finish(rc, { status: "waiting_for_input", text: text || "Mình cần bạn xác nhận thêm để tiếp tục.", actions, links: links() });
       return "finished";
     }
 
@@ -674,6 +678,7 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
     status: "waiting_for_input",
     text: "Mình đã thực hiện vài bước nhưng cần bạn xác nhận thêm trước khi tiếp tục — bạn nói rõ hơn giúp mình nhé?",
     actions,
+    links: links(),
   });
   return "finished";
 }

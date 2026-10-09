@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { watchInvoices, watchProducts, watchCustomers } from "@/lib/store";
 import { createInvoiceApi, createCustomerApi, createProductApi, newOperationId } from "@/lib/businessApi";
+import ChatFilterBanner from "@/components/ChatFilterBanner";
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import { isInvoiceIncomplete, type Invoice, type Product, type Customer, type InvoiceLineItem } from "@/lib/types";
@@ -26,10 +27,29 @@ interface DraftLine {
   price: number;
 }
 
+// useSearchParams (filters opened from a chat shortcut) needs a Suspense boundary to build.
 export default function InvoicesPage() {
+  return (
+    <Suspense fallback={null}>
+      <InvoicesPageContent />
+    </Suspense>
+  );
+}
+
+function InvoicesPageContent() {
   const router = useRouter();
   const { authedFetch, notifyPossibleRevocation } = useAppAuth();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [allInvoices, setInvoices] = useState<Invoice[]>([]);
+  // Opened from a chat shortcut: /invoices?customer=… (one customer's invoices) and/or ?status=unpaid (unpaid + partial).
+  const searchParams = useSearchParams();
+  const customerFilter = searchParams.get("customer");
+  const unpaidOnly = searchParams.get("status") === "unpaid";
+  const invoices = allInvoices.filter(
+    (i) =>
+      (!customerFilter || i.customerId === customerFilter) &&
+      (!unpaidOnly || i.paymentStatus === "unpaid" || i.paymentStatus === "partial")
+  );
+
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
@@ -158,6 +178,16 @@ export default function InvoicesPage() {
           <Plus size={16} /> New
         </button>
       </div>
+
+      {(customerFilter || unpaidOnly) && (
+        <ChatFilterBanner
+          label={[
+            customerFilter ? `Invoice của ${invoices[0]?.customerName ?? "khách này"}` : "Tất cả invoice",
+            unpaidOnly ? "chưa thanh toán" : "",
+          ].filter(Boolean).join(" · ")}
+          clearHref="/invoices"
+        />
+      )}
 
       {/* Desktop table */}
       <div className="hidden md:block rounded-2xl border border-slate-200 bg-white overflow-hidden">

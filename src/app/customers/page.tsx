@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { watchCustomers } from "@/lib/store";
 import { createCustomerApi, updateCustomerApi } from "@/lib/businessApi";
+import { useSearchParams } from "next/navigation";
+import ChatFilterBanner from "@/components/ChatFilterBanner";
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Customer } from "@/lib/types";
@@ -33,9 +35,22 @@ const emptyForm: FormState = {
   notes: "",
 };
 
+// useSearchParams (filters opened from a chat shortcut) needs a Suspense boundary to build.
 export default function CustomersPage() {
+  return (
+    <Suspense fallback={null}>
+      <CustomersPageContent />
+    </Suspense>
+  );
+}
+
+function CustomersPageContent() {
   const { authedFetch, notifyPossibleRevocation } = useAppAuth();
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [allCustomers, setCustomers] = useState<Customer[]>([]);
+  // Opened from a chat shortcut (/customers?id=…): show just that customer.
+  const focusId = useSearchParams().get("id");
+  const customers = focusId ? allCustomers.filter((c) => c.id === focusId) : allCustomers;
+
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -115,6 +130,8 @@ export default function CustomersPage() {
           <Plus size={16} /> Add customer
         </button>
       </div>
+
+      {focusId && <ChatFilterBanner label="Đang xem khách hàng mở từ chat" clearHref="/customers" />}
 
       <div className="hidden md:block rounded-2xl border border-slate-200 bg-white overflow-hidden">
         <table className="w-full text-sm">
