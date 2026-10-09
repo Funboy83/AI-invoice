@@ -2,11 +2,14 @@
 
 import { useState } from "react";
 import { Loader2, LogIn } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useAppAuth } from "@/lib/useAppAuth";
+import { openChatAfterSignIn } from "./ChatPanel";
 
 /** Sign-in screen shown by RequireAuth in front of both business pages and the chat UI. */
 export default function ChatSignIn({ compact = false }: { compact?: boolean }) {
   const { signIn } = useAppAuth();
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -16,8 +19,14 @@ export default function ChatSignIn({ compact = false }: { compact?: boolean }) {
     e.preventDefault();
     if (busy || !email.trim() || !password) return;
     setBusy(true);
-    setError(await signIn(email, password));
+    const err = await signIn(email, password);
+    setError(err);
     setBusy(false);
+    if (!err) {
+      // Land on the AI chat after logging in: "/" is the full-screen chat on phones, and the drawer opens on desktop.
+      openChatAfterSignIn();
+      router.replace("/");
+    }
   }
 
   return (
