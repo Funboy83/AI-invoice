@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "node:crypto";
 import { toolDefinitions, executeTool, MUTATING_TOOLS, operationIdFor, type ToolContext } from "@/lib/ai/tools";
 import { SYSTEM_PROMPT } from "@/lib/ai/systemPrompt";
-import { collectLinks, linksForToolResult, type ChatLink } from "@/lib/chat/links";
+import { choicesFromCandidates, cleanChoices, collectLinks, linksForToolResult, type ChatLink } from "@/lib/chat/links";
 import { ConfigError, getAdminDb } from "./firebaseAdmin";
 import { isMember } from "./membership";
 import { dispatchContinuation } from "./dispatch";
@@ -111,6 +111,16 @@ function isBlocking(call: ToolCallDoc): boolean {
   if (call.resultStatus && BLOCKING_STATUSES.has(call.resultStatus)) return true;
   const incomplete = safeParse(call.resultJson)?.incompleteItems;
   return Array.isArray(incomplete) && incomplete.length > 0;
+}
+
+/** Tap-to-answer buttons from the latest tool result that listed similar customers/products (needs_confirmation). */
+function candidateChoices(calls: ToolCallDoc[]): string[] {
+  let choices: string[] = [];
+  for (const call of calls) {
+    const found = choicesFromCandidates(safeParse(call.resultJson));
+    if (found.length > 0) choices = found;
+  }
+  return choices;
 }
 
 function capResult(json: string): string {
@@ -589,7 +599,8 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
     if (uses.length === 0) {
       // Final reply. If the last tools left a question open, this job is waiting for her, not done.
       const waiting = previousStepCalls.some(isBlocking);
-      await finish(rc, { status: waiting ? "waiting_for_input" : "completed", text: textOf(content), actions, links: links() });
+      const choices = waiting ? candidateChoices(previousStepCalls) : [];
+      await finish(rc, { status: waiting ? "waiting_for_input" : "completed", text: textOf(content), actions, links: links(), choices });
       return "finished";
     }
 
@@ -652,17 +663,24 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
 
     const stepCalls = results as ToolCallDoc[];
     let question: string | null = null;
+    let choices: string[] = [];
     stepCalls.forEach((call, idx) => {
       actions.push({ tool: call.name, result: call.resultStatus ? { status: call.resultStatus } : {} });
       linkGroups.push(linksForToolResult(call.name, safeParse(call.inputJson), safeParse(call.resultJson)));
-      if (uses[idx].name === "requestUserInput") question = String((uses[idx].input as { question?: unknown })?.question ?? "").trim();
+      if (uses[idx].name === "requestUserInput") {
+        const input = uses[idx].input as { question?: unknown; options?: unknown };
+        question = String(input?.question ?? "").trim();
+        choices = cleanChoices(input?.options);
+      }
     });
+    // The AI asked without giving buttons: offer the similar records the previous step's tool found, if any.
+    if (question !== null && choices.length === 0) choices = candidateChoices([...previousStepCalls, ...stepCalls]);
 
     if (question !== null) {
       const preface = textOf(content);
       const q: string = question;
       const text = preface && q && !preface.includes(q) ? `${preface}\n\n${q}` : preface || q;
-      await finish(rc, { status: "waiting_for_input", text: text || "Mình cần bạn xác nhận thêm để tiếp tục.", actions, links: links() });
+      await finish(rc, { status: "waiting_for_input", text: text || "Mình cần bạn xác nhận thêm để tiếp tục.", actions, links: links(), choices });
       return "finished";
     }
 

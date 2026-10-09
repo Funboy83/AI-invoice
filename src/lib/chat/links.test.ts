@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectLinks, isSafeChatHref, linksForToolResult, MAX_CHAT_LINKS } from "./links";
+import { choicesFromCandidates, cleanChoices, collectLinks, isSafeChatHref, linksForToolResult, MAX_CHAT_CHOICES, MAX_CHAT_LINKS } from "./links";
 
 const inv = (id: string, invoiceNumber: string) => ({ id, invoiceNumber, customerName: "Hoa" });
 
@@ -61,5 +61,23 @@ describe("isSafeChatHref", () => {
     expect(isSafeChatHref("//evil.example/invoices")).toBe(false);
     expect(isSafeChatHref("javascript:alert(1)")).toBe(false);
     expect(isSafeChatHref("/invoicesX")).toBe(false);
+  });
+});
+
+describe("answer choices", () => {
+  it("cleans the AI's options", () => {
+    expect(cleanChoices([" Chị Hoa  Lee ", "chị hoa lee", 3, "", "Khách mới"])).toEqual(["Chị Hoa Lee", "Khách mới"]);
+    expect(cleanChoices("x")).toEqual([]);
+    expect(cleanChoices(Array.from({ length: 10 }, (_, i) => `c${i}`))).toHaveLength(MAX_CHAT_CHOICES);
+  });
+
+  it("turns needs_confirmation candidates into buttons", () => {
+    expect(
+      choicesFromCandidates({
+        status: "needs_confirmation",
+        candidates: [{ id: "1", name: "Hoa Lee", phone: "0909" }, { id: "2", name: "Hoa Nguyen" }, { id: "3" }],
+      })
+    ).toEqual(["Hoa Lee – 0909", "Hoa Nguyen"]);
+    expect(choicesFromCandidates({ status: "created", candidates: [{ name: "x" }] })).toEqual([]);
   });
 });

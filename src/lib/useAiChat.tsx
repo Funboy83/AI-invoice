@@ -5,7 +5,7 @@ import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestor
 import { db } from "./firebase";
 import { useAppAuth, isPermissionDenied } from "./useAppAuth";
 import type { ChatMessageDoc, ClientJobStatus, JobView } from "./chat/types";
-import { isSafeChatHref, type ChatLink } from "./chat/links";
+import { cleanChoices, isSafeChatHref, type ChatLink } from "./chat/links";
 
 /** One row in the conversation, as the UI draws it. */
 export interface ThreadItem {
@@ -27,6 +27,8 @@ export interface ThreadItem {
   actions?: { tool: string; result: unknown }[];
   /** Shortcut buttons to the records this reply is about. */
   links?: ChatLink[];
+  /** Tap-to-answer buttons for a question she hasn't answered yet. */
+  choices?: string[];
   /** Failed job that can be retried from the checkpoint. */
   retryJobId?: string;
 }
@@ -271,6 +273,7 @@ export function AiChatProvider({ children }: { children: ReactNode }) {
           actions: d.actions,
           links: Array.isArray(d.links) ? d.links.filter((l) => isSafeChatHref(l?.href) && typeof l.label === "string") : undefined,
           awaitingAnswer: d.kind === "question" && d.order > lastUserOrder,
+          choices: d.kind === "question" && d.order > lastUserOrder ? cleanChoices(d.choices) : undefined,
           // Only the newest job can be retried (older ones would run out of order).
           retryJobId: d.kind === "error" && d.jobSeq === lastSeq && jobById.get(d.jobId)?.failure?.retryable !== false ? d.jobId : undefined,
         });

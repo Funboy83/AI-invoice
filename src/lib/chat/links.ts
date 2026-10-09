@@ -121,3 +121,43 @@ export function collectLinks(groups: ChatLink[][]): ChatLink[] {
 export function isSafeChatHref(href: unknown): href is string {
   return typeof href === "string" && /^\/(invoices|customers|products)(\/|\?|$)/.test(href) && !href.startsWith("//");
 }
+
+/* ------------------------------ answer choices ------------------------------ */
+
+/** Most tap-to-answer buttons under one question. */
+export const MAX_CHAT_CHOICES = 6;
+const MAX_CHOICE_CHARS = 120;
+
+/** Cleans the AI's `options` (or candidate labels): strings only, trimmed, no duplicates, capped. */
+export function cleanChoices(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const v of raw) {
+    if (typeof v !== "string") continue;
+    const c = v.replace(/\s+/g, " ").trim().slice(0, MAX_CHOICE_CHARS);
+    if (!c || seen.has(c.toLowerCase())) continue;
+    seen.add(c.toLowerCase());
+    out.push(c);
+    if (out.length === MAX_CHAT_CHOICES) break;
+  }
+  return out;
+}
+
+/**
+ * Fallback when the AI asked "which one?" without giving options: the similar customers/products a tool just
+ * returned (`needs_confirmation` → `candidates`) become the buttons, labelled by name plus phone when known.
+ */
+export function choicesFromCandidates(result: unknown): string[] {
+  const r = obj(result);
+  if (!r || r.status !== "needs_confirmation" || !Array.isArray(r.candidates)) return [];
+  return cleanChoices(
+    r.candidates.map((c) => {
+      const o = obj(c);
+      const name = str(o?.name);
+      if (!name) return null;
+      const phone = str(o?.phone);
+      return phone ? `${name} – ${phone}` : name;
+    })
+  );
+}

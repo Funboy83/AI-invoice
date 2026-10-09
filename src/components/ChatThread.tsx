@@ -126,6 +126,25 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
               </p>
             )}
             {m.role === "assistant" ? <ChatMarkdown content={splitSuggestions(m.content).body} mobile={mobile} /> : m.content}
+            {m.choices && m.choices.length > 0 && (
+              // Tap to answer instead of typing: the tapped text is sent as her reply.
+              <div className="mt-3 flex flex-col items-stretch gap-2">
+                {m.choices.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => send(c)}
+                    disabled={busy}
+                    className={clsx(
+                      "rounded-xl border border-amber-300 bg-white text-left font-medium text-slate-800 hover:bg-amber-50 active:bg-amber-100 disabled:opacity-50",
+                      mobile ? "px-3.5 py-2.5 text-[15px]" : "px-3 py-2 text-sm"
+                    )}
+                  >
+                    {c}
+                  </button>
+                ))}
+                <p className={clsx("text-slate-500", mobile ? "text-xs" : "text-[11px]")}>Hoặc gõ câu trả lời khác bên dưới.</p>
+              </div>
+            )}
             {m.links && m.links.length > 0 && (
               <div className="mt-2.5 flex flex-wrap gap-1.5">
                 {m.links.map((l) => (

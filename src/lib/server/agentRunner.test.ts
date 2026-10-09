@@ -305,6 +305,34 @@ describe("confirmation rules are preserved", () => {
     expect(jobDoc(2).status).toBe("completed");
   });
 
+  it("saves the AI's answer options as tap-to-answer choices on the question", async () => {
+    const { jobId } = await say("tạo invoice cho Hoa");
+    const model = scriptedModel([
+      [toolUse("t1", "requestUserInput", { question: "Chị Hoa nào ạ?", options: ["Hoa Lee – 0909", " Hoa Lee – 0909 ", "Khách mới", 7] })],
+    ]);
+    await driveJob(jobId, deps(model));
+    expect(replyMsg(1)).toMatchObject({ kind: "question", choices: ["Hoa Lee – 0909", "Khách mới"] });
+  });
+
+  it("falls back to the similar records a tool found when the AI gives no options", async () => {
+    const { jobId } = await say("thêm sản phẩm Milo giá 30");
+    const model = scriptedModel([
+      [toolUse("t1", "createProduct", { name: "Milo", defaultPrice: 30 })],
+      [toolUse("t2", "requestUserInput", { question: "Dùng Milo cũ hay tạo mới?" })],
+    ]);
+    await driveJob(jobId, deps(model));
+    expect(lastToolResult(model.calls[1])).toMatchObject({ status: "needs_confirmation" });
+    const choices = replyMsg(1)!.choices as string[];
+    expect(choices.length).toBeGreaterThan(0);
+    expect(choices[0]).toContain("Milo");
+  });
+
+  it("a finished answer has no choices", async () => {
+    const { jobId } = await say("chào");
+    await driveJob(jobId, deps(scriptedModel([[text("Chào chị")]])));
+    expect(replyMsg(1)!.choices).toBeUndefined();
+  });
+
   it("an unrelated later message cannot use force=true even if an old question existed", async () => {
     const { jobId: id1 } = await say("a");
     await driveJob(id1, deps(scriptedModel([[text("ok")]])));
