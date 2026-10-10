@@ -358,7 +358,15 @@ export const toolDefinitions = [
       "Pause the task and ask the user something. Call this whenever you need missing information (quantity, price), a choice between similar customers/products, or approval before continuing — instead of guessing and instead of ending your reply with a question. The question is saved, the task waits, and the user's next message is the answer. Put the complete question in `question`.",
     input_schema: {
       type: "object" as const,
-      properties: { question: { type: "string", description: "The full question for the user, in their language." } },
+      properties: {
+        question: { type: "string", description: "The full question for the user, in their language." },
+        options: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Tap-to-answer buttons shown under the question (up to 6). Each is a short, complete answer in the user's language that you will understand on its own as her reply, e.g. the similar customers/products by name with a detail that tells them apart (\"Chị Hoa Lee – 0909 123 456\"), plus \"Khách mới, không phải ai ở trên\" when creating a new one is possible. Give options whenever the answer is a choice (which customer/product, yes/no, which invoice); leave out only for free-form answers like a price or quantity.",
+        },
+      },
       required: ["question"],
     },
   },

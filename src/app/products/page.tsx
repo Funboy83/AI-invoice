@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { watchProducts } from "@/lib/store";
 import { createProductApi, updateProductApi } from "@/lib/businessApi";
+import { useSearchParams } from "next/navigation";
+import ChatFilterBanner from "@/components/ChatFilterBanner";
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Product } from "@/lib/types";
@@ -36,9 +38,22 @@ const emptyForm: FormState = {
   active: true,
 };
 
+// useSearchParams (filters opened from a chat shortcut) needs a Suspense boundary to build.
 export default function ProductsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ProductsPageContent />
+    </Suspense>
+  );
+}
+
+function ProductsPageContent() {
   const { authedFetch, notifyPossibleRevocation } = useAppAuth();
-  const [products, setProducts] = useState<Product[]>([]);
+  const [allProducts, setProducts] = useState<Product[]>([]);
+  // Opened from a chat shortcut (/products?id=…): show just that product.
+  const focusId = useSearchParams().get("id");
+  const products = focusId ? allProducts.filter((p) => p.id === focusId) : allProducts;
+
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
@@ -139,6 +154,8 @@ export default function ProductsPage() {
       </div>
 
       {/* Desktop table */}
+      {focusId && <ChatFilterBanner label="Đang xem sản phẩm mở từ chat" clearHref="/products" />}
+
       <div className="hidden md:block rounded-2xl border border-slate-200 bg-white overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 text-xs uppercase">

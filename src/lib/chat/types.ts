@@ -1,3 +1,5 @@
+import type { ChatLink } from "./links";
+
 /** Shared (client + server) shapes for durable AI chat. Persisted in Firestore under chatConversations / chatJobs. */
 
 /** fetch with an ID token attached — the shape useAppAuth().authedFetch exposes, reused by src/lib/businessApi.ts. */
@@ -57,6 +59,10 @@ export interface ChatMessageDoc {
   /** Assistant messages. */
   kind?: ChatMessageKind;
   actions?: { tool: string; result: { status?: string } }[];
+  /** Assistant messages: shortcut buttons to the invoices/customers/products the reply is about. */
+  links?: ChatLink[];
+  /** Assistant questions: tap-to-answer buttons (similar customers/products, yes/no …). */
+  choices?: string[];
 }
 
 export const MAX_MESSAGE_CHARS = 8000;

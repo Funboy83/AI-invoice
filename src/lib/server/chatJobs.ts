@@ -2,6 +2,7 @@ import type { Firestore, Transaction } from "firebase-admin/firestore";
 import { getAdminDb } from "./firebaseAdmin";
 import { HttpError, type AuthedUser } from "./auth";
 import { logJob } from "./jobLog";
+import type { ChatLink } from "@/lib/chat/links";
 import {
   MAX_MESSAGE_CHARS,
   REQUEST_ID_RE,
@@ -387,6 +388,10 @@ export interface FinishInput {
   status: "completed" | "waiting_for_input";
   text: string;
   actions: { tool: string; result: { status?: string } }[];
+  /** Shortcut buttons to the records this reply touched (see src/lib/chat/links.ts). */
+  links?: ChatLink[];
+  /** Tap-to-answer buttons for a question (waiting_for_input). */
+  choices?: string[];
 }
 
 /**
@@ -409,6 +414,8 @@ export async function finishJob(jobId: string, workerId: string, input: FinishIn
       createdAt: now,
       kind,
       actions: input.actions.slice(0, MAX_ACTIONS_MIRRORED),
+      ...(input.links && input.links.length > 0 ? { links: input.links } : {}),
+      ...(input.status === "waiting_for_input" && input.choices && input.choices.length > 0 ? { choices: input.choices } : {}),
     };
     tx.set(messageRef(job.conversationId, replyOrder(job.seq)), reply);
     tx.update(convRef(job.conversationId), { headSeq: job.seq, updatedAt: now });

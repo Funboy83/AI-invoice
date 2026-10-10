@@ -12,8 +12,19 @@ import ChatThread from "./ChatThread";
  * Rendered only inside RequireAuth (layout.tsx), so it can assume it's always authorized — no loading/signedOut/
  * denied branches needed here.
  */
+// Set by the sign-in screen so the chat greets her right after logging in. Module-level on purpose: it only has to
+// survive from the sign-in click to this panel mounting (RequireAuth mounts it once authorized), not a reload.
+let openAfterSignIn = false;
+export function openChatAfterSignIn() {
+  openAfterSignIn = true;
+}
+
 export default function ChatPanel() {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(() => {
+    const requested = openAfterSignIn;
+    openAfterSignIn = false;
+    return requested;
+  });
   const { email, signOut } = useAppAuth();
   const { input, setInput, send, busy } = useAiChat();
 
@@ -31,7 +42,7 @@ export default function ChatPanel() {
 
       <div
         className={clsx(
-          "hidden md:flex fixed inset-y-0 right-0 z-50 w-full max-w-sm bg-white border-l border-slate-200 shadow-2xl flex-col transition-transform duration-200",
+          "hidden md:flex fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white border-l border-slate-200 shadow-2xl flex-col transition-transform duration-200",
           open ? "translate-x-0" : "translate-x-full"
         )}
       >

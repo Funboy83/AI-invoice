@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useRef, type ReactNode } from "react";
-import { AlertCircle, CheckCheck, HelpCircle, Loader2, RotateCcw, WifiOff } from "lucide-react";
+import Link from "next/link";
+import { AlertCircle, ArrowUpRight, CheckCheck, CornerDownRight, HelpCircle, Loader2, RotateCcw, WifiOff } from "lucide-react";
 import clsx from "clsx";
-import { CHAT_WELCOME, actionSummary, useAiChat, type ThreadItem } from "@/lib/useAiChat";
+import { CHAT_WELCOME, actionSummary, followUpsFor, useAiChat, type ThreadItem } from "@/lib/useAiChat";
+import ChatMarkdown from "./ChatMarkdown";
+import { splitSuggestions } from "@/lib/chat/markdown";
 
 /** Small status line under one of her messages: sending → accepted → running → (waiting / failed). */
 function StatusLine({ item, mobile }: { item: ThreadItem; mobile: boolean }) {
@@ -64,10 +67,16 @@ function StatusLine({ item, mobile }: { item: ThreadItem; mobile: boolean }) {
 
 /** The conversation itself (restored from Firestore) with per-request status. Shared by the desktop drawer and mobile home. */
 export default function ChatThread({ variant, scrollKey, children }: { variant: "desktop" | "mobile"; scrollKey?: unknown; children?: ReactNode }) {
-  const { thread, retryJob, online, loadError, notice } = useAiChat();
+  const { thread, retryJob, online, loadError, notice, send, setInput, busy } = useAiChat();
   const mobile = variant === "mobile";
   const scrollRef = useRef<HTMLDivElement>(null);
   const last = thread[thread.length - 1];
+  // "Xem tiếp" buttons only under the newest finished answer, and only when nothing else is running: the AI's own
+  // suggested next questions (tap = ask), or else fixed next steps for what was just done (tap = fill the box).
+  const showFollowUps = last && last.role === "assistant" && !last.awaitingAnswer && last.kind !== "error" && !busy;
+  const aiSuggestions = showFollowUps ? splitSuggestions(last.content).suggestions : [];
+  const followUps =
+    aiSuggestions.length > 0 ? aiSuggestions.map((q) => ({ label: q, text: q, send: true })) : showFollowUps ? followUpsFor(last.actions) : [];
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -100,15 +109,15 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
         <div key={m.key} className={clsx("flex flex-col", m.role === "user" ? "items-end" : "items-start")}>
           <div
             className={clsx(
-              "max-w-[85%] rounded-2xl whitespace-pre-wrap leading-relaxed",
+              "min-w-0 rounded-2xl leading-relaxed",
               mobile ? "px-4 py-3 text-[15px]" : "px-3.5 py-2.5 text-sm",
               m.role === "user"
-                ? "bg-indigo-600 text-white rounded-br-sm"
+                ? "max-w-[85%] whitespace-pre-wrap bg-indigo-600 text-white rounded-br-sm"
                 : m.kind === "error"
-                  ? "bg-red-50 text-red-900 rounded-bl-sm"
+                  ? "max-w-[95%] bg-red-50 text-red-900 rounded-bl-sm"
                   : m.awaitingAnswer
-                    ? "bg-amber-50 text-slate-800 ring-2 ring-amber-400 rounded-bl-sm"
-                    : "bg-slate-100 text-slate-800 rounded-bl-sm"
+                    ? "max-w-[95%] bg-amber-50 text-slate-800 ring-2 ring-amber-400 rounded-bl-sm"
+                    : "max-w-[95%] bg-slate-100 text-slate-800 rounded-bl-sm"
             )}
           >
             {m.awaitingAnswer && (
@@ -116,7 +125,42 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
                 <HelpCircle size={13} /> Cần bạn trả lời để tiếp tục
               </p>
             )}
-            {m.content}
+            {m.role === "assistant" ? <ChatMarkdown content={splitSuggestions(m.content).body} mobile={mobile} /> : m.content}
+            {m.choices && m.choices.length > 0 && (
+              // Tap to answer instead of typing: the tapped text is sent as her reply.
+              <div className="mt-3 flex flex-col items-stretch gap-2">
+                {m.choices.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => send(c)}
+                    disabled={busy}
+                    className={clsx(
+                      "rounded-xl border border-amber-300 bg-white text-left font-medium text-slate-800 hover:bg-amber-50 active:bg-amber-100 disabled:opacity-50",
+                      mobile ? "px-3.5 py-2.5 text-[15px]" : "px-3 py-2 text-sm"
+                    )}
+                  >
+                    {c}
+                  </button>
+                ))}
+                <p className={clsx("text-slate-500", mobile ? "text-xs" : "text-[11px]")}>Hoặc gõ câu trả lời khác bên dưới.</p>
+              </div>
+            )}
+            {m.links && m.links.length > 0 && (
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {m.links.map((l) => (
+                  <Link
+                    key={l.href}
+                    href={l.href}
+                    className={clsx(
+                      "flex items-center gap-1 rounded-full bg-white border border-indigo-200 font-medium text-indigo-700 hover:bg-indigo-50 active:bg-indigo-100",
+                      mobile ? "px-3 py-1.5 text-sm" : "px-2.5 py-1 text-xs"
+                    )}
+                  >
+                    {l.label} <ArrowUpRight size={mobile ? 14 : 12} />
+                  </Link>
+                ))}
+              </div>
+            )}
             {m.actions && m.actions.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {m.actions.map((a, idx) => (
@@ -138,6 +182,25 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
           {m.role === "user" && <StatusLine item={m} mobile={mobile} />}
         </div>
       ))}
+
+      {followUps.length > 0 && (
+        <div className="flex flex-col items-start gap-2">
+          <p className={clsx("text-slate-500", mobile ? "text-sm" : "text-xs")}>Xem tiếp:</p>
+          {followUps.map((f) => (
+            <button
+              key={f.label}
+              onClick={() => (f.send ? send(f.text) : setInput(f.text))}
+              className={clsx(
+                "flex max-w-full items-center gap-2 rounded-xl border border-slate-300 bg-white text-left text-slate-800 hover:bg-slate-50 active:bg-slate-100",
+                mobile ? "px-3.5 py-2.5 text-[15px]" : "px-3 py-1.5 text-sm"
+              )}
+            >
+              <CornerDownRight size={mobile ? 16 : 14} className="shrink-0 text-slate-400" />
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {children}
     </div>
