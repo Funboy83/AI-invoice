@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { watchInvoices, watchProducts, watchCustomers, createInvoice, createCustomer, createProduct } from "@/lib/store";
+import { useRouter, useSearchParams } from "next/navigation";
+import { watchInvoices, watchProducts, watchCustomers } from "@/lib/store";
+import { createInvoiceApi, createCustomerApi, createProductApi, newOperationId } from "@/lib/businessApi";
+import ChatFilterBanner from "@/components/ChatFilterBanner";
+import { useActionId } from "@/lib/useActionId";
+import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import { isInvoiceIncomplete, type Invoice, type Product, type Customer, type InvoiceLineItem } from "@/lib/types";
 import { Plus, X, Trash2, AlertTriangle } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
@@ -23,9 +27,29 @@ interface DraftLine {
   price: number;
 }
 
+// useSearchParams (filters opened from a chat shortcut) needs a Suspense boundary to build.
 export default function InvoicesPage() {
+  return (
+    <Suspense fallback={null}>
+      <InvoicesPageContent />
+    </Suspense>
+  );
+}
+
+function InvoicesPageContent() {
   const router = useRouter();
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const { authedFetch, notifyPossibleRevocation } = useAppAuth();
+  const [allInvoices, setInvoices] = useState<Invoice[]>([]);
+  // Opened from a chat shortcut: /invoices?customer=… (one customer's invoices) and/or ?status=unpaid (unpaid + partial).
+  const searchParams = useSearchParams();
+  const customerFilter = searchParams.get("customer");
+  const unpaidOnly = searchParams.get("status") === "unpaid";
+  const invoices = allInvoices.filter(
+    (i) =>
+      (!customerFilter || i.customerId === customerFilter) &&
+      (!unpaidOnly || i.paymentStatus === "unpaid" || i.paymentStatus === "partial")
+  );
+
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
@@ -37,17 +61,19 @@ export default function InvoicesPage() {
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const createAction = useActionId(); // one stable id per open of the "New invoice" modal, reused across retries
 
   useEffect(() => {
-    const u1 = watchInvoices(setInvoices);
-    const u2 = watchProducts(setProducts);
-    const u3 = watchCustomers(setCustomers);
+    const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
+    const u1 = watchInvoices(setInvoices, onErr);
+    const u2 = watchProducts(setProducts, onErr);
+    const u3 = watchCustomers(setCustomers, onErr);
     return () => {
       u1();
       u2();
       u3();
     };
-  }, []);
+  }, [notifyPossibleRevocation]);
 
   const total = useMemo(() => {
     const subtotal = lines.reduce((sum, l) => sum + l.quantity * l.price, 0);
@@ -62,6 +88,7 @@ export default function InvoicesPage() {
     setNotes("");
     setLines([]);
     setError("");
+    createAction.start();
     setModalOpen(true);
   }
 
@@ -79,12 +106,13 @@ export default function InvoicesPage() {
 
   async function handleCreateProductForLine(idx: number, name: string) {
     const line = lines[idx];
-    const product = await createProduct({ name, defaultPrice: line?.price || 0, defaultUnit: "thùng" });
+    // A one-shot quick-add (no retry affordance in this UI) — its own fresh id, independent of the invoice's own.
+    const product = await createProductApi(authedFetch, { name, defaultPrice: line?.price || 0, defaultUnit: "thùng" }, newOperationId());
     updateLine(idx, { productId: product.id, productName: product.name, price: product.defaultPrice });
   }
 
   async function handleCreateCustomer(name: string) {
-    const customer = await createCustomer({ name });
+    const customer = await createCustomerApi(authedFetch, { name }, newOperationId());
     setCustomerId(customer.id);
     setCustomerName(customer.name);
   }
@@ -114,19 +142,21 @@ export default function InvoicesPage() {
       const existing = customerId
         ? customers.find((c) => c.id === customerId)
         : customers.find((c) => c.name.toLowerCase() === customerName.trim().toLowerCase());
-      const invoice = await createInvoice({
-        customerId: existing?.id,
-        customerName: existing?.name ?? customerName.trim(),
-        items,
-        shipping: Number(shipping) || 0,
-        discount: Number(discount) || 0,
-        notes,
-        status: "unpaid",
-        createdBy: "user",
-        actor: "user",
-      });
+      const { invoice, stockWarnings } = await createInvoiceApi(
+        authedFetch,
+        {
+          customerId: existing?.id,
+          customerName: existing?.name ?? customerName.trim(),
+          items,
+          shipping: Number(shipping) || 0,
+          discount: Number(discount) || 0,
+          notes,
+        },
+        createAction.current()
+      );
       setModalOpen(false);
-      router.push(`/invoices/${invoice.id}`);
+      const warningQuery = stockWarnings?.length ? `?stockWarning=${encodeURIComponent(stockWarnings.join(" | "))}` : "";
+      router.push(`/invoices/${invoice.id}${warningQuery}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create invoice.");
     } finally {
@@ -148,6 +178,16 @@ export default function InvoicesPage() {
           <Plus size={16} /> New
         </button>
       </div>
+
+      {(customerFilter || unpaidOnly) && (
+        <ChatFilterBanner
+          label={[
+            customerFilter ? `Invoice của ${invoices[0]?.customerName ?? "khách này"}` : "Tất cả invoice",
+            unpaidOnly ? "chưa thanh toán" : "",
+          ].filter(Boolean).join(" · ")}
+          clearHref="/invoices"
+        />
+      )}
 
       {/* Desktop table */}
       <div className="hidden md:block rounded-2xl border border-slate-200 bg-white overflow-hidden">

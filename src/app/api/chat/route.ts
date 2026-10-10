@@ -1,104 +1,39 @@
-import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
-import { toolDefinitions, executeTool } from "@/lib/ai/tools";
+import { NextRequest, NextResponse, after } from "next/server";
+import { authenticate } from "@/lib/server/auth";
+import { acceptMessage } from "@/lib/server/chatJobs";
+import { driveJob } from "@/lib/server/agentRunner";
+import { errorResponse, logged } from "@/lib/server/http";
 
 export const runtime = "nodejs";
+// The background run happens inside `after()`, which lives for the route's max duration on Vercel.
+// Keep equal to INVOCATION_LIMIT_MS in agentRunner.ts (a test enforces it).
+export const maxDuration = 300;
 
-const SYSTEM_PROMPT = `You are the Vietnamese-speaking virtual secretary for a small wholesale/store business, run by a husband and wife. You act like a smart employee who understands messy, informal Vietnamese (with or without accents, abbreviations, typos, shorthand mixed with English) as well as English, and who actually operates the invoicing app through your tools — you never just describe what buttons to click.
-
-How you work:
-1. Read customer order messages (often pasted directly from SMS/Zalo/Messenger) and turn them into structured invoice drafts using your tools. You extract product names, quantities, units, and prices from the text — but the APPLICATION always computes money math (line totals, subtotal, total, balance). Never state a total yourself; only report the numbers a tool actually returned. ALL money amounts in this app are USD ($) only, never VND or any other currency — every number you extract as a price/shipping/discount/payment is a USD amount, even though the surrounding order text is in Vietnamese. If a number in the text is ambiguous (could be a quantity or a price), ask the user instead of guessing.
-2. Product & customer matching is critical. Always search before creating. If a tool returns needs_confirmation (a similar existing product/customer was found), stop and ask the user in Vietnamese-friendly, natural language whether they meant the existing one — do not silently create a duplicate. If they confirm it's a different, new item, create it (force=true) and then ask if you should remember their original wording as an alias (addProductAlias/addCustomerAlias) if it wasn't an exact name.
-3. If a tool returns needs_new_product or needs_new_customer, tell the user briefly and ask only for the missing essentials (e.g. price/unit for a product) before creating it — don't show a big form, just ask conversationally.
-4. If quantity or price can't be inferred (no current price, no last price, no default), createInvoiceDraft still saves the invoice — as an INCOMPLETE temp draft — instead of failing. When its result includes incompleteItems, tell the user plainly which item(s) are missing quantity and/or price, that the invoice was saved as a temporary/incomplete draft, and ask them to either give you the missing info (then use updateInvoiceItem to fill it in) or say if the order was wrong so you can delete it (updateInvoice with status=void, with a reason). Don't finalizeInvoice while any item is still incomplete. If a price was explicitly given but differs from what this customer paid last time, mention it (tools surface this as priceWarnings) rather than silently using either value.
-5. Maintain conversational context: track which customer and which invoice draft are "current" from the conversation, so short follow-ups like "thêm 5 milo" or "shipping đổi 300" apply to the right invoice without the user repeating themselves.
-6. Editing invoices (addInvoiceItem/updateInvoiceItem/removeInvoiceItem/updateInvoice) always needs a short reason — this is permanently logged, so never edit silently.
-7. To copy a previous invoice, use copyInvoice (never mutates the original), then apply requested changes with addInvoiceItem/updateInvoiceItem/removeInvoiceItem.
-8. For debt/unpaid questions, use getCustomerDebt / getUnpaidInvoices / searchInvoices — only report numbers that come from these tools, never invent balances, prices, or invoice data.
-9. Reading/searching never needs confirmation. Only pause for confirmation before creating a possibly-duplicate product/customer, or before large/unusual payments or status changes the user didn't explicitly request.
-10. Be concise and natural — respond the way a helpful, competent employee would text back, in Vietnamese when the user writes Vietnamese. Summarize what you did (or need from them) plainly, including quantities/prices/totals exactly as returned by tools.`;
-
-function getClient() {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return null;
-  return new Anthropic({ apiKey });
-}
-
+/**
+ * Accepts a chat message as a durable job and returns immediately with its id (HTTP 202).
+ * Nothing is processed until the job (and the user's message) are safely stored in Firestore; the work itself then
+ * runs after the response and can be resumed from its checkpoints by any later invocation if this one dies.
+ * Sending the same `requestId` again returns the original job instead of creating a second one.
+ */
 export async function POST(req: NextRequest) {
-  const client = getClient();
-  if (!client) {
-    const hint = process.env.VERCEL
-      ? "Add it in your Vercel project's Settings → Environment Variables, then redeploy."
-      : "Add it to .env.local and restart the dev server.";
+  const invocationStart = Date.now(); // the platform's time limit counts from here
+  try {
+    const user = await authenticate(req);
+    if (!process.env.ANTHROPIC_API_KEY) {
+      const hint = process.env.VERCEL
+        ? "Add it in your Vercel project's Settings → Environment Variables, then redeploy."
+        : "Add it to .env.local and restart the dev server.";
+      return NextResponse.json({ error: `ANTHROPIC_API_KEY is not configured on the server. ${hint}` }, { status: 503 });
+    }
+    const body = await req.json().catch(() => null);
+    const accepted = await acceptMessage(user, { requestId: body?.requestId, content: body?.content });
+    // Also on duplicates: if the first invocation died right after accepting, this re-drives it (claimJob no-ops otherwise).
+    after(logged(`drive ${accepted.jobId}`, () => driveJob(accepted.jobId, undefined, { invocationStart })));
     return NextResponse.json(
-      { error: `ANTHROPIC_API_KEY is not configured on the server. ${hint}` },
-      { status: 500 }
+      { jobId: accepted.jobId, status: accepted.status, duplicate: accepted.duplicate },
+      { status: 202 }
     );
+  } catch (err) {
+    return errorResponse(err);
   }
-
-  const body = await req.json();
-  const rawMessages: { role: "user" | "assistant"; content: string }[] = body.messages ?? [];
-  // Cap how much history we resend — without this, every message re-sends the ENTIRE
-  // conversation so far and cost grows unbounded as a chat session gets longer.
-  const HISTORY_LIMIT = 40;
-  const messages: Anthropic.Messages.MessageParam[] = rawMessages
-    .slice(-HISTORY_LIMIT)
-    .map((m) => ({ role: m.role, content: m.content }));
-
-  const actions: { tool: string; result: unknown }[] = [];
-  const model = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
-
-  // The system prompt and tool schemas are byte-identical on every request, so mark them
-  // as cacheable — Anthropic charges ~10% of input price for a cache hit instead of full price.
-  const system: Anthropic.Messages.TextBlockParam[] = [
-    { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-  ];
-  const cachedTools = toolDefinitions.map((t, i) =>
-    i === toolDefinitions.length - 1 ? { ...t, cache_control: { type: "ephemeral" as const } } : t
-  );
-
-  // Agentic tool-use loop: keep letting Claude call tools until it produces a
-  // final text reply (capped to avoid runaway loops).
-  for (let step = 0; step < 10; step++) {
-    const response = await client.messages.create({
-      model,
-      max_tokens: 2048,
-      system,
-      tools: cachedTools,
-      messages,
-    });
-
-    messages.push({ role: "assistant", content: response.content });
-
-    const toolUses = response.content.filter(
-      (block): block is Anthropic.Messages.ToolUseBlock => block.type === "tool_use"
-    );
-
-    if (toolUses.length === 0) {
-      const text = response.content
-        .filter((block): block is Anthropic.Messages.TextBlock => block.type === "text")
-        .map((block) => block.text)
-        .join("\n");
-      return NextResponse.json({ reply: text, actions });
-    }
-
-    const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
-    for (const call of toolUses) {
-      let result: unknown;
-      try {
-        result = await executeTool(call.name, call.input as Record<string, unknown>);
-      } catch (err) {
-        result = { status: "error", message: err instanceof Error ? err.message : "Tool execution failed" };
-      }
-      actions.push({ tool: call.name, result });
-      toolResults.push({ type: "tool_result", tool_use_id: call.id, content: JSON.stringify(result) });
-    }
-    messages.push({ role: "user", content: toolResults });
-  }
-
-  return NextResponse.json({
-    reply: "Mình đã thực hiện vài bước nhưng cần bạn xác nhận thêm trước khi tiếp tục — bạn nói rõ hơn giúp mình nhé?",
-    actions,
-  });
 }
-

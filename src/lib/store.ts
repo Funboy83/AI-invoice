@@ -1,3 +1,16 @@
+/**
+ * Client-SDK Firestore access. Since Task B, its role is narrower than the name suggests:
+ *   - READS (getX / watchX) are still how business pages read data — real-time, in the browser, gated by
+ *     Firestore rules requiring store membership (see firestore.rules and src/lib/server/membership.ts).
+ *   - WRITES (createX / updateX / recordPayment / copyInvoice …) are no longer reachable from the app: Firestore
+ *     rules deny direct browser writes to every business collection, so calling these from a page would just get
+ *     a permission-denied error. Manual mutations now go through authenticated /api/business/* routes, and AI
+ *     mutations go through src/lib/ai/tools.ts — both call src/lib/server/businessStore.ts, an Admin-SDK mirror
+ *     of this file's write functions (same collections, same transactions, same idempotency ledger, and the same
+ *     shared invoiceMath.ts/domainErrors.ts so totals and Task A's serialization fix can't drift between the two).
+ *   They are kept here, unchanged, rather than deleted, because src/lib/invoiceSerialization.test.ts (Task A's
+ *   regression test) exercises them directly against the real Firestore client SDK's write-time validation.
+ */
 import {
   collection,
   doc,
@@ -8,9 +21,12 @@ import {
   getDocs,
   query,
   orderBy,
+  where,
+  documentId,
   onSnapshot,
   runTransaction,
   Timestamp,
+  type Transaction,
 } from "firebase/firestore";
 import { db } from "./firebase";
 import type {
@@ -23,6 +39,10 @@ import type {
   Payment,
   Product,
 } from "./types";
+import { DomainError, NotFoundError } from "./domainErrors";
+import { calcTotals, computePaymentStatus, invoiceItemsForWrite } from "./invoiceMath";
+
+export { DomainError, NotFoundError };
 
 const productsCol = collection(db, "products");
 const customersCol = collection(db, "customers");
@@ -30,6 +50,29 @@ const invoicesCol = collection(db, "invoices");
 const paymentsCol = collection(db, "payments");
 const logsCol = collection(db, "invoiceLogs");
 const countersCol = collection(db, "counters");
+const operationsCol = collection(db, "operations");
+
+/**
+ * Runs `body` in a transaction that is idempotent per `operationId`: the ledger doc `operations/{id}` is read
+ * and written in the SAME transaction as the business writes, so a retried request or a restarted worker
+ * gets the original result back instead of applying the change twice. Without an id it is a plain transaction.
+ * `body` must do all its reads before its writes and be safe to re-run (Firestore retries on contention).
+ */
+async function runOnce<T>(
+  operationId: string | undefined,
+  tool: string,
+  body: (tx: Transaction) => Promise<T>
+): Promise<T> {
+  return runTransaction(db, async (tx) => {
+    if (!operationId) return body(tx);
+    const opRef = doc(operationsCol, operationId);
+    const opSnap = await tx.get(opRef);
+    if (opSnap.exists()) return JSON.parse(opSnap.data().resultJson as string) as T;
+    const result = await body(tx);
+    tx.set(opRef, { operationId, tool, createdAt: Date.now(), resultJson: JSON.stringify(result) });
+    return result;
+  });
+}
 
 function toMillis(v: unknown): number {
   if (v instanceof Timestamp) return v.toMillis();
@@ -57,9 +100,9 @@ function hydrateProduct(id: string, data: Record<string, unknown>): Product {
   };
 }
 
-export function watchProducts(cb: (products: Product[]) => void) {
+export function watchProducts(cb: (products: Product[]) => void, onError?: (err: unknown) => void) {
   const q = query(productsCol, orderBy("name"));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateProduct(d.id, d.data()))));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateProduct(d.id, d.data()))), onError);
 }
 
 export async function getAllProducts(): Promise<Product[]> {
@@ -72,6 +115,20 @@ export async function getProductById(id: string): Promise<Product | null> {
   return snap.exists() ? hydrateProduct(snap.id, snap.data()) : null;
 }
 
+/**
+ * Fetches many products in as few round trips as possible: `documentId() in [...]` takes up to 30 ids per query
+ * (chunks run in parallel). Unknown ids are simply absent from the result. Needs no index.
+ */
+export async function getProductsByIds(ids: string[]): Promise<Map<string, Product>> {
+  const unique = [...new Set(ids)];
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += 30) chunks.push(unique.slice(i, i + 30));
+  const snaps = await Promise.all(chunks.map((chunk) => getDocs(query(productsCol, where(documentId(), "in", chunk)))));
+  const out = new Map<string, Product>();
+  for (const snap of snaps) for (const d of snap.docs) out.set(d.id, hydrateProduct(d.id, d.data()));
+  return out;
+}
+
 export async function createProduct(input: {
   name: string;
   aliases?: string[];
@@ -82,6 +139,7 @@ export async function createProduct(input: {
   defaultPrice: number;
   cost?: number;
   notes?: string;
+  operationId?: string;
 }): Promise<Product> {
   const now = Date.now();
   const payload = {
@@ -98,25 +156,44 @@ export async function createProduct(input: {
     createdAt: now,
     updatedAt: now,
   };
+  if (input.operationId) {
+    const ref = doc(productsCol);
+    return runOnce(input.operationId, "createProduct", async (tx) => {
+      tx.set(ref, payload);
+      return hydrateProduct(ref.id, payload);
+    });
+  }
   const ref = await addDoc(productsCol, payload);
   return hydrateProduct(ref.id, payload);
 }
 
 export async function updateProduct(
   id: string,
-  changes: Partial<Pick<Product, "name" | "barcode" | "description" | "category" | "defaultUnit" | "defaultPrice" | "cost" | "notes" | "active">>
+  changes: Partial<Pick<Product, "name" | "barcode" | "description" | "category" | "defaultUnit" | "defaultPrice" | "cost" | "notes" | "active">>,
+  operationId?: string
 ): Promise<void> {
+  if (operationId) {
+    await runOnce(operationId, "updateProduct", async (tx) => {
+      const ref = doc(db, "products", id);
+      if (!(await tx.get(ref)).exists()) throw new NotFoundError("Product not found");
+      tx.update(ref, { ...changes, updatedAt: Date.now() });
+      return null;
+    });
+    return;
+  }
   await updateDoc(doc(db, "products", id), { ...changes, updatedAt: Date.now() });
 }
 
-export async function addProductAlias(id: string, alias: string): Promise<void> {
-  const product = await getProductById(id);
-  if (!product) throw new Error("Product not found");
+export async function addProductAlias(id: string, alias: string, operationId?: string): Promise<void> {
   const normalized = alias.trim();
-  if (!normalized || product.aliases.some((a) => a.toLowerCase() === normalized.toLowerCase())) return;
-  await updateDoc(doc(db, "products", id), {
-    aliases: [...product.aliases, normalized],
-    updatedAt: Date.now(),
+  await runOnce(operationId, "addProductAlias", async (tx) => {
+    const ref = doc(db, "products", id);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new NotFoundError("Product not found");
+    const product = hydrateProduct(snap.id, snap.data());
+    if (!normalized || product.aliases.some((a) => a.toLowerCase() === normalized.toLowerCase())) return null;
+    tx.update(ref, { aliases: [...product.aliases, normalized], updatedAt: Date.now() });
+    return null;
   });
 }
 
@@ -144,9 +221,9 @@ function hydrateCustomer(id: string, data: Record<string, unknown>): Customer {
   };
 }
 
-export function watchCustomers(cb: (customers: Customer[]) => void) {
+export function watchCustomers(cb: (customers: Customer[]) => void, onError?: (err: unknown) => void) {
   const q = query(customersCol, orderBy("name"));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateCustomer(d.id, d.data()))));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateCustomer(d.id, d.data()))), onError);
 }
 
 export async function getAllCustomers(): Promise<Customer[]> {
@@ -169,6 +246,7 @@ export async function createCustomer(input: {
   shippingAddress?: string;
   notes?: string;
   defaultShipping?: number;
+  operationId?: string;
 }): Promise<Customer> {
   const now = Date.now();
   const payload = {
@@ -185,25 +263,44 @@ export async function createCustomer(input: {
     createdAt: now,
     updatedAt: now,
   };
+  if (input.operationId) {
+    const ref = doc(customersCol);
+    return runOnce(input.operationId, "createCustomer", async (tx) => {
+      tx.set(ref, payload);
+      return hydrateCustomer(ref.id, payload);
+    });
+  }
   const ref = await addDoc(customersCol, payload);
   return hydrateCustomer(ref.id, payload);
 }
 
 export async function updateCustomer(
   id: string,
-  changes: Partial<Pick<Customer, "name" | "contactName" | "phone" | "email" | "address" | "shippingAddress" | "notes" | "defaultShipping" | "active">>
+  changes: Partial<Pick<Customer, "name" | "contactName" | "phone" | "email" | "address" | "shippingAddress" | "notes" | "defaultShipping" | "active">>,
+  operationId?: string
 ): Promise<void> {
+  if (operationId) {
+    await runOnce(operationId, "updateCustomer", async (tx) => {
+      const ref = doc(db, "customers", id);
+      if (!(await tx.get(ref)).exists()) throw new NotFoundError("Customer not found");
+      tx.update(ref, { ...changes, updatedAt: Date.now() });
+      return null;
+    });
+    return;
+  }
   await updateDoc(doc(db, "customers", id), { ...changes, updatedAt: Date.now() });
 }
 
-export async function addCustomerAlias(id: string, alias: string): Promise<void> {
-  const customer = await getCustomerById(id);
-  if (!customer) throw new Error("Customer not found");
+export async function addCustomerAlias(id: string, alias: string, operationId?: string): Promise<void> {
   const normalized = alias.trim();
-  if (!normalized || customer.aliases.some((a) => a.toLowerCase() === normalized.toLowerCase())) return;
-  await updateDoc(doc(db, "customers", id), {
-    aliases: [...customer.aliases, normalized],
-    updatedAt: Date.now(),
+  await runOnce(operationId, "addCustomerAlias", async (tx) => {
+    const ref = doc(db, "customers", id);
+    const snap = await tx.get(ref);
+    if (!snap.exists()) throw new NotFoundError("Customer not found");
+    const customer = hydrateCustomer(snap.id, snap.data());
+    if (!normalized || customer.aliases.some((a) => a.toLowerCase() === normalized.toLowerCase())) return null;
+    tx.update(ref, { aliases: [...customer.aliases, normalized], updatedAt: Date.now() });
+    return null;
   });
 }
 
@@ -232,9 +329,9 @@ function hydrateInvoice(id: string, data: Record<string, unknown>): Invoice {
   };
 }
 
-export function watchInvoices(cb: (invoices: Invoice[]) => void) {
+export function watchInvoices(cb: (invoices: Invoice[]) => void, onError?: (err: unknown) => void) {
   const q = query(invoicesCol, orderBy("createdAt", "desc"));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateInvoice(d.id, d.data()))));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateInvoice(d.id, d.data()))), onError);
 }
 
 export async function getAllInvoices(): Promise<Invoice[]> {
@@ -247,35 +344,20 @@ export async function getInvoice(id: string): Promise<Invoice | null> {
   return snap.exists() ? hydrateInvoice(snap.id, snap.data()) : null;
 }
 
+/**
+ * All invoices for one customer, newest first. Uses a single-field equality filter, which Firestore serves from its
+ * automatic single-field index — NO composite index is required. (Adding `orderBy("createdAt","desc")` or a
+ * `limit()` to this query would require a composite index on invoices: customerId ASC, createdAt DESC — we sort in
+ * memory instead so nothing has to be deployed and "last price" still sees the customer's full history.)
+ */
+export async function getInvoicesForCustomer(customerId: string): Promise<Invoice[]> {
+  const snap = await getDocs(query(invoicesCol, where("customerId", "==", customerId)));
+  return snap.docs.map((d) => hydrateInvoice(d.id, d.data())).sort((a, b) => b.createdAt - a.createdAt);
+}
+
 export async function getInvoiceByNumber(number: string): Promise<Invoice | null> {
   const invoices = await getAllInvoices();
   return invoices.find((i) => i.invoiceNumber.toLowerCase() === number.toLowerCase()) ?? null;
-}
-
-function calcTotals(items: InvoiceLineItem[], shipping: number, discount: number) {
-  const subtotal = Math.round(items.reduce((sum, li) => sum + li.lineTotal, 0) * 100) / 100;
-  const total = Math.round((subtotal + shipping - discount) * 100) / 100;
-  return { subtotal, total };
-}
-
-/** draft/void are manual states; otherwise status is derived from paid amount vs total. */
-function computePaymentStatus(total: number, amountPaid: number, manualStatus?: InvoiceStatus): InvoiceStatus {
-  if (manualStatus === "void" || manualStatus === "draft") return manualStatus;
-  if (amountPaid <= 0) return "unpaid";
-  if (amountPaid >= total) return "paid";
-  return "partial";
-}
-
-async function nextInvoiceNumber(): Promise<string> {
-  const counterRef = doc(countersCol, "invoiceCounter");
-  const next = await runTransaction(db, async (tx) => {
-    const snap = await tx.get(counterRef);
-    const current = snap.exists() ? (snap.data().value as number) : 1999;
-    const value = current + 1;
-    tx.set(counterRef, { value }, { merge: true });
-    return value;
-  });
-  return String(next);
 }
 
 export async function createInvoice(input: {
@@ -289,54 +371,65 @@ export async function createInvoice(input: {
   status?: InvoiceStatus;
   createdBy: "ai" | "user";
   actor: LogActor;
+  /** Makes the create idempotent: the same id never creates a second invoice or consumes a second number. */
+  operationId?: string;
 }): Promise<Invoice> {
-  const invoiceNumber = await nextInvoiceNumber();
   const now = Date.now();
   const shipping = input.shipping ?? 0;
   const discount = input.discount ?? 0;
-  const { subtotal, total } = calcTotals(input.items, shipping, discount);
+  const items = invoiceItemsForWrite(input.items);
+  const { subtotal, total } = calcTotals(items, shipping, discount);
   const paymentStatus = computePaymentStatus(total, 0, input.status ?? "draft");
 
   const invoiceRef = doc(invoicesCol);
-  const payload = {
-    invoiceNumber,
-    date: now,
-    customerId: input.customerId ?? "",
-    customerName: input.customerName,
-    originalOrderText: input.originalOrderText ?? "",
-    items: input.items,
-    shipping,
-    discount,
-    subtotal,
-    total,
-    amountPaid: 0,
-    balance: total,
-    paymentStatus,
-    notes: input.notes ?? "",
-    createdAt: now,
-    updatedAt: now,
-    createdBy: input.createdBy,
-  };
+  const logRef = doc(logsCol);
+  const counterRef = doc(countersCol, "invoiceCounter");
 
-  await runTransaction(db, async (tx) => {
+  // Number allocation, invoice, audit log and idempotency ledger commit together (or not at all).
+  return runOnce(input.operationId, "createInvoice", async (tx) => {
+    const counterSnap = await tx.get(counterRef);
+    const current = counterSnap.exists() ? (counterSnap.data().value as number) : 1999;
+    const value = current + 1;
+    const invoiceNumber = String(value);
+    tx.set(counterRef, { value }, { merge: true });
+
+    const payload = {
+      invoiceNumber,
+      date: now,
+      customerId: input.customerId ?? "",
+      customerName: input.customerName,
+      originalOrderText: input.originalOrderText ?? "",
+      items,
+      shipping,
+      discount,
+      subtotal,
+      total,
+      amountPaid: 0,
+      balance: total,
+      paymentStatus,
+      notes: input.notes ?? "",
+      createdAt: now,
+      updatedAt: now,
+      createdBy: input.createdBy,
+    };
     tx.set(invoiceRef, payload);
-    const logRef = doc(logsCol);
     tx.set(logRef, {
       invoiceId: invoiceRef.id,
       timestamp: now,
       actor: input.actor,
       action: "create",
       message: `Invoice ${invoiceNumber} created for ${input.customerName} (total $${total.toFixed(2)})`,
-      after: { items: input.items, shipping, discount, total },
+      after: { items, shipping, discount, total },
+      ...(input.operationId ? { operationId: input.operationId } : {}),
     });
+    return hydrateInvoice(invoiceRef.id, payload);
   });
-
-  return hydrateInvoice(invoiceRef.id, payload);
 }
 
 export async function updateInvoiceWithLog(input: {
   invoiceId: string;
-  items?: InvoiceLineItem[];
+  /** Either the new list, or a function of the invoice as read INSIDE the transaction (avoids lost updates). */
+  items?: InvoiceLineItem[] | ((before: Invoice) => InvoiceLineItem[]);
   shipping?: number;
   discount?: number;
   status?: InvoiceStatus;
@@ -345,15 +438,17 @@ export async function updateInvoiceWithLog(input: {
   customerName?: string;
   actor: LogActor;
   reason: string;
+  operationId?: string;
 }): Promise<Invoice> {
   const invoiceRef = doc(db, "invoices", input.invoiceId);
+  const logRef = doc(logsCol);
 
-  const result = await runTransaction(db, async (tx) => {
+  return runOnce(input.operationId, "updateInvoice", async (tx) => {
     const snap = await tx.get(invoiceRef);
-    if (!snap.exists()) throw new Error("Invoice not found");
+    if (!snap.exists()) throw new NotFoundError("Invoice not found");
     const before = hydrateInvoice(snap.id, snap.data());
 
-    const items = input.items ?? before.items;
+    const items = invoiceItemsForWrite(typeof input.items === "function" ? input.items(before) : input.items ?? before.items);
     const shipping = input.shipping ?? before.shipping;
     const discount = input.discount ?? before.discount;
     const { subtotal, total } = calcTotals(items, shipping, discount);
@@ -376,33 +471,28 @@ export async function updateInvoiceWithLog(input: {
     if (input.customerName !== undefined) updatedFields.customerName = input.customerName;
 
     tx.update(invoiceRef, updatedFields);
-
-    const logRef = doc(logsCol);
     tx.set(logRef, {
       invoiceId: input.invoiceId,
       timestamp: now,
       actor: input.actor,
       action: "update",
       message: input.reason,
-      before: { items: before.items, shipping: before.shipping, discount: before.discount, total: before.total, status: before.paymentStatus },
+      before: { items: invoiceItemsForWrite(before.items), shipping: before.shipping, discount: before.discount, total: before.total, status: before.paymentStatus },
       after: { items, shipping, discount, total, status: paymentStatus },
+      ...(input.operationId ? { operationId: input.operationId } : {}),
     });
 
-    return {
-      ...before,
-      ...updatedFields,
-    } as Invoice;
+    return { ...before, ...updatedFields } as Invoice;
   });
-
-  return result;
 }
 
 export async function copyInvoice(input: {
   sourceInvoiceId: string;
   actor: LogActor;
+  operationId?: string;
 }): Promise<Invoice> {
   const source = await getInvoice(input.sourceInvoiceId);
-  if (!source) throw new Error("Source invoice not found");
+  if (!source) throw new NotFoundError("Source invoice not found");
   return createInvoice({
     customerId: source.customerId,
     customerName: source.customerName,
@@ -414,6 +504,7 @@ export async function copyInvoice(input: {
     status: "draft",
     createdBy: "ai",
     actor: input.actor,
+    operationId: input.operationId,
   });
 }
 
@@ -423,13 +514,15 @@ export async function recordPayment(input: {
   method?: string;
   note?: string;
   actor: LogActor;
+  operationId?: string;
 }): Promise<{ invoice: Invoice; payment: Payment }> {
   const invoiceRef = doc(db, "invoices", input.invoiceId);
   const paymentRef = doc(paymentsCol);
+  const logRef = doc(logsCol);
 
-  const result = await runTransaction(db, async (tx) => {
+  return runOnce(input.operationId, "recordPayment", async (tx) => {
     const snap = await tx.get(invoiceRef);
-    if (!snap.exists()) throw new Error("Invoice not found");
+    if (!snap.exists()) throw new NotFoundError("Invoice not found");
     const before = hydrateInvoice(snap.id, snap.data());
     const now = Date.now();
 
@@ -453,8 +546,6 @@ export async function recordPayment(input: {
       actor: input.actor,
     };
     tx.set(paymentRef, paymentPayload);
-
-    const logRef = doc(logsCol);
     tx.set(logRef, {
       invoiceId: input.invoiceId,
       timestamp: now,
@@ -463,6 +554,7 @@ export async function recordPayment(input: {
       message: `Payment of $${input.amount.toFixed(2)} recorded (balance now $${balance.toFixed(2)})`,
       before: { amountPaid: before.amountPaid, balance: before.balance },
       after: { amountPaid, balance },
+      ...(input.operationId ? { operationId: input.operationId } : {}),
     });
 
     return {
@@ -470,8 +562,6 @@ export async function recordPayment(input: {
       payment: { id: paymentRef.id, ...paymentPayload } as Payment,
     };
   });
-
-  return result;
 }
 
 export async function getPaymentsForInvoice(invoiceId: string): Promise<Payment[]> {
@@ -503,13 +593,17 @@ export async function getUnpaidInvoices(statusFilter?: InvoiceStatus): Promise<I
   return invoices.filter((i) => i.paymentStatus === "unpaid" || i.paymentStatus === "partial");
 }
 
-export function watchInvoiceLogs(invoiceId: string, cb: (logs: InvoiceLog[]) => void) {
+export function watchInvoiceLogs(invoiceId: string, cb: (logs: InvoiceLog[]) => void, onError?: (err: unknown) => void) {
   const q = query(logsCol, orderBy("timestamp", "desc"));
-  return onSnapshot(q, (snap) => {
-    cb(
-      snap.docs
-        .map((d) => ({ id: d.id, ...d.data() } as InvoiceLog))
-        .filter((l) => l.invoiceId === invoiceId)
-    );
-  });
+  return onSnapshot(
+    q,
+    (snap) => {
+      cb(
+        snap.docs
+          .map((d) => ({ id: d.id, ...d.data() } as InvoiceLog))
+          .filter((l) => l.invoiceId === invoiceId)
+      );
+    },
+    onError
+  );
 }

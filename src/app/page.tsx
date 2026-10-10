@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { watchProducts, watchCustomers, watchInvoices } from "@/lib/store";
+import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import { isInvoiceIncomplete, type Product, type Customer, type Invoice } from "@/lib/types";
 import { FileText, Boxes, Users, AlertTriangle } from "lucide-react";
 import MobileChatHome from "@/components/MobileChatHome";
@@ -22,20 +23,22 @@ function StatCard({ label, value, icon: Icon }: { label: string; value: string; 
 }
 
 function DashboardContent() {
+  const { notifyPossibleRevocation } = useAppAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
 
   useEffect(() => {
-    const u1 = watchProducts(setProducts);
-    const u2 = watchCustomers(setCustomers);
-    const u3 = watchInvoices(setInvoices);
+    const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
+    const u1 = watchProducts(setProducts, onErr);
+    const u2 = watchCustomers(setCustomers, onErr);
+    const u3 = watchInvoices(setInvoices, onErr);
     return () => {
       u1();
       u2();
       u3();
     };
-  }, []);
+  }, [notifyPossibleRevocation]);
 
   const revenue = invoices.filter((i) => i.paymentStatus !== "void" && i.paymentStatus !== "draft").reduce((s, i) => s + i.total, 0);
   const outstanding = invoices

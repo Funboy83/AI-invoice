@@ -1,7 +1,8 @@
-import { findSimilarWithAliases, similarity } from "@/lib/similarity";
+import { findSimilarWithAliases, normalizeVN, similarity } from "@/lib/similarity";
 import {
   getAllProducts,
   getProductById,
+  getProductsByIds,
   createProduct as createProductDoc,
   updateProduct as updateProductDoc,
   addProductAlias as addProductAliasDoc,
@@ -18,9 +19,12 @@ import {
   getInvoice as getInvoiceDoc,
   getInvoiceByNumber,
   getAllInvoices,
+  getInvoicesForCustomer,
   getCustomerDebt as getCustomerDebtDoc,
   getUnpaidInvoices as getUnpaidInvoicesDoc,
-} from "@/lib/store";
+  DomainError,
+  NotFoundError,
+} from "@/lib/server/businessStore";
 import type { Customer, Invoice, InvoiceLineItem, InvoiceStatus, Product } from "@/lib/types";
 
 /** Anthropic tool-use definitions exposed to the assistant. */
@@ -56,6 +60,7 @@ export const toolDefinitions = [
         defaultUnit: { type: "string", description: "e.g. thùng, kg, bao, chai. Defaults to 'unit'." },
         defaultPrice: { type: "number" },
         cost: { type: "number" },
+        quantity: { type: "number", description: "Starting stock count. Omit entirely to leave this product's stock untracked — invoicing will never touch it." },
         category: { type: "string" },
         barcode: { type: "string" },
         notes: { type: "string" },
@@ -66,7 +71,8 @@ export const toolDefinitions = [
   },
   {
     name: "updateProduct",
-    description: "Update fields of an existing product (name, price, unit, category, cost, notes, active).",
+    description:
+      "Update fields of an existing product (name, price, unit, category, cost, quantity, notes, active). Setting quantity also starts/corrects stock tracking for a product that didn't have it before — only do this if the user explicitly gives you a stock count.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -75,6 +81,7 @@ export const toolDefinitions = [
         defaultUnit: { type: "string" },
         defaultPrice: { type: "number" },
         cost: { type: "number" },
+        quantity: { type: "number" },
         category: { type: "string" },
         notes: { type: "string" },
         active: { type: "boolean" },
@@ -346,6 +353,24 @@ export const toolDefinitions = [
     },
   },
   {
+    name: "requestUserInput",
+    description:
+      "Pause the task and ask the user something. Call this whenever you need missing information (quantity, price), a choice between similar customers/products, or approval before continuing — instead of guessing and instead of ending your reply with a question. The question is saved, the task waits, and the user's next message is the answer. Put the complete question in `question`.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        question: { type: "string", description: "The full question for the user, in their language." },
+        options: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Tap-to-answer buttons shown under the question (up to 6). Each is a short, complete answer in the user's language that you will understand on its own as her reply, e.g. the similar customers/products by name with a detail that tells them apart (\"Chị Hoa Lee – 0909 123 456\"), plus \"Khách mới, không phải ai ở trên\" when creating a new one is possible. Give options whenever the answer is a choice (which customer/product, yes/no, which invoice); leave out only for free-form answers like a price or quantity.",
+        },
+      },
+      required: ["question"],
+    },
+  },
+  {
     name: "searchPayments",
     description: "List recorded payments, optionally filtered by invoice or customer.",
     input_schema: {
@@ -357,9 +382,56 @@ export const toolDefinitions = [
 
 type ToolArgs = Record<string, unknown>;
 
+/** Tools that change data. Each call gets a stable operation id so a retry or worker restart never applies it twice. */
+export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
+  "createProduct",
+  "updateProduct",
+  "addProductAlias",
+  "createCustomer",
+  "updateCustomer",
+  "addCustomerAlias",
+  "createInvoiceDraft",
+  "addInvoiceItem",
+  "updateInvoiceItem",
+  "removeInvoiceItem",
+  "updateInvoice",
+  "finalizeInvoice",
+  "copyInvoice",
+  "recordPayment",
+]);
+
+export interface ToolContext {
+  /** Stable per tool call (jobId + tool_use id); passed to every mutating store call. */
+  operationId?: string;
+  /** True only when this job is the user's reply to a question the AI asked — the only time force=true is honoured. */
+  canConfirm?: boolean;
+  /** Optional timing hook (phase name, ms, counts). Must never receive order text, names or other customer data. */
+  trace?: (phase: string, ms: number, fields?: Record<string, number>) => void;
+}
+
+/** Ledger-friendly id for one tool call: the same (job, tool_use id) always maps to the same operation. */
+export function operationIdFor(jobId: string, toolUseId: string): string {
+  return `${jobId}__${toolUseId}`.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
 /** Confident match cutoff for auto-using a product/customer without asking. */
 const AUTO_MATCH_THRESHOLD = 0.82;
 const AMBIGUOUS_THRESHOLD = 0.55;
+
+type AliasSuggestion = { kind: "product" | "customer"; id: string; name: string; inputText: string };
+
+/**
+ * Aliases stay at 0 in practice unless something actually prompts the AI to save one for an auto-matched (fuzzy,
+ * not exact) name — the system prompt alone only covers the "confirmed new item" flow. Called at every fuzzy-match
+ * site with the input text the user actually typed; returns a suggestion only when that phrasing differs from the
+ * canonical name and isn't already a known alias, so the AI isn't nagged into re-asking about the same alias twice.
+ */
+function buildAliasSuggestion(kind: "product" | "customer", id: string, canonicalName: string, aliases: string[], inputText: string): AliasSuggestion | null {
+  const normInput = normalizeVN(inputText);
+  if (!normInput || normInput === normalizeVN(canonicalName)) return null;
+  if (aliases.some((a) => normalizeVN(a) === normInput)) return null;
+  return { kind, id, name: canonicalName, inputText: inputText.trim() };
+}
 
 function summarizeProduct(p: Product) {
   return { id: p.id, name: p.name, aliases: p.aliases, defaultUnit: p.defaultUnit, defaultPrice: p.defaultPrice, category: p.category };
@@ -373,8 +445,8 @@ type ProductMatch =
   | { status: "ambiguous"; query: string; candidates: ReturnType<typeof summarizeProduct>[] }
   | { status: "not_found"; query: string };
 
-async function resolveProductMatch(query: string): Promise<ProductMatch> {
-  const products = await getAllProducts();
+/** Pure: match `query` against an already-loaded catalog (so a multi-item order reads the catalog once). */
+function matchProduct(query: string, products: Product[]): ProductMatch {
   const matches = findSimilarWithAliases(query, products, (p) => p.name, (p) => p.aliases, AMBIGUOUS_THRESHOLD);
   if (matches.length === 0) return { status: "not_found", query };
   if (matches[0].score >= AUTO_MATCH_THRESHOLD) return { status: "match", product: matches[0].item };
@@ -383,6 +455,10 @@ async function resolveProductMatch(query: string): Promise<ProductMatch> {
     query,
     candidates: matches.slice(0, 5).map((m) => ({ ...summarizeProduct(m.item), score: Math.round(m.score * 100) / 100 })),
   };
+}
+
+async function resolveProductMatch(query: string): Promise<ProductMatch> {
+  return matchProduct(query, await getAllProducts());
 }
 
 type CustomerMatch =
@@ -402,16 +478,23 @@ async function resolveCustomerMatch(query: string): Promise<CustomerMatch> {
   };
 }
 
-async function getLastPriceForCustomerProduct(customerId: string, productId: string): Promise<number | null> {
-  const invoices = await getAllInvoices();
-  const relevant = invoices
-    .filter((i) => i.customerId === customerId && i.paymentStatus !== "void")
-    .sort((a, b) => b.createdAt - a.createdAt);
+/**
+ * productId → price on this customer's most recent non-void invoice containing it (first matching line within an
+ * invoice). Built once from one history fetch instead of re-scanning every invoice per product.
+ */
+function buildLastPriceMap(customerInvoices: Invoice[]): Map<string, number> {
+  const map = new Map<string, number>();
+  const relevant = customerInvoices.filter((i) => i.paymentStatus !== "void").sort((a, b) => b.createdAt - a.createdAt);
   for (const inv of relevant) {
-    const line = inv.items.find((it) => it.productId === productId);
-    if (line) return line.price;
+    for (const line of inv.items) {
+      if (line.productId && !map.has(line.productId)) map.set(line.productId, line.price);
+    }
   }
-  return null;
+  return map;
+}
+
+async function getLastPriceForCustomerProduct(customerId: string, productId: string): Promise<number | null> {
+  return buildLastPriceMap(await getInvoicesForCustomer(customerId)).get(productId) ?? null;
 }
 
 function findLineIndex(invoice: Invoice, match: { productId?: string; productName?: string }): number {
@@ -434,7 +517,23 @@ function findLineIndex(invoice: Invoice, match: { productId?: string; productNam
   return -1;
 }
 
-export async function executeTool(name: string, args: ToolArgs): Promise<unknown> {
+/**
+ * Runs one tool. Business-rule failures (DomainError) of mutating tools come back as a normal `error`/`not_found`
+ * result for the AI. Anything else (network, Firestore outage…) is rethrown so the job retries the SAME operation
+ * id rather than telling the AI it failed and letting it try again under a new one.
+ */
+export async function executeTool(name: string, args: ToolArgs, ctx: ToolContext = {}): Promise<unknown> {
+  try {
+    return await runTool(name, args, ctx);
+  } catch (err) {
+    if (err instanceof NotFoundError) return { status: "not_found", message: err.message };
+    if (err instanceof DomainError) return { status: "error", message: err.message };
+    throw err;
+  }
+}
+
+async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<unknown> {
+  const operationId = ctx.operationId;
   switch (name) {
     case "searchProduct": {
       const products = await getAllProducts();
@@ -449,7 +548,7 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
 
     case "createProduct": {
       const name_ = String(args.name);
-      if (!args.force) {
+      if (!args.force || !ctx.canConfirm) {
         const check = await resolveProductMatch(name_);
         if (check.status !== "not_found") {
           return {
@@ -465,9 +564,11 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         defaultUnit: args.defaultUnit ? String(args.defaultUnit) : undefined,
         defaultPrice: Number(args.defaultPrice),
         cost: args.cost !== undefined ? Number(args.cost) : undefined,
+        quantity: args.quantity !== undefined ? Number(args.quantity) : undefined,
         category: args.category ? String(args.category) : undefined,
         barcode: args.barcode ? String(args.barcode) : undefined,
         notes: args.notes ? String(args.notes) : undefined,
+        operationId,
       });
       return { status: "created", product };
     }
@@ -478,15 +579,16 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         ...(args.defaultUnit !== undefined ? { defaultUnit: String(args.defaultUnit) } : {}),
         ...(args.defaultPrice !== undefined ? { defaultPrice: Number(args.defaultPrice) } : {}),
         ...(args.cost !== undefined ? { cost: Number(args.cost) } : {}),
+        ...(args.quantity !== undefined ? { quantity: Number(args.quantity) } : {}),
         ...(args.category !== undefined ? { category: String(args.category) } : {}),
         ...(args.notes !== undefined ? { notes: String(args.notes) } : {}),
         ...(args.active !== undefined ? { active: Boolean(args.active) } : {}),
-      });
+      }, operationId);
       return { status: "updated" };
     }
 
     case "addProductAlias": {
-      await addProductAliasDoc(String(args.productId), String(args.alias));
+      await addProductAliasDoc(String(args.productId), String(args.alias), operationId);
       return { status: "alias_added" };
     }
 
@@ -503,7 +605,7 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
 
     case "createCustomer": {
       const name_ = String(args.name);
-      if (!args.force) {
+      if (!args.force || !ctx.canConfirm) {
         const check = await resolveCustomerMatch(name_);
         if (check.status !== "not_found") {
           return {
@@ -523,6 +625,7 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         shippingAddress: args.shippingAddress ? String(args.shippingAddress) : undefined,
         notes: args.notes ? String(args.notes) : undefined,
         defaultShipping: args.defaultShipping !== undefined ? Number(args.defaultShipping) : undefined,
+        operationId,
       });
       return { status: "created", customer };
     }
@@ -538,12 +641,12 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         ...(args.notes !== undefined ? { notes: String(args.notes) } : {}),
         ...(args.defaultShipping !== undefined ? { defaultShipping: Number(args.defaultShipping) } : {}),
         ...(args.active !== undefined ? { active: Boolean(args.active) } : {}),
-      });
+      }, operationId);
       return { status: "updated" };
     }
 
     case "addCustomerAlias": {
-      await addCustomerAliasDoc(String(args.customerId), String(args.alias));
+      await addCustomerAliasDoc(String(args.customerId), String(args.alias), operationId);
       return { status: "alias_added" };
     }
 
@@ -553,15 +656,27 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
     }
 
     case "createInvoiceDraft": {
+      const rawItems = (args.items as Array<Record<string, unknown>>) ?? [];
+      const readsStart = performance.now();
+      // Every read this tool needs is done ONCE per execution (never once per line item) and never cached across
+      // executions, so prices are always read fresh. The catalog load overlaps with customer resolution.
+      const needsCatalog = rawItems.some((raw) => !raw.productId && raw.productName);
+      const catalogRead = needsCatalog ? getAllProducts() : null;
+      catalogRead?.catch(() => {}); // if we return early below, don't leave an unhandled rejection behind
+
       // Resolve customer.
       let customer: Customer | null = null;
+      const aliasSuggestions: AliasSuggestion[] = [];
       if (args.customerId) {
         customer = await getCustomerById(String(args.customerId));
         if (!customer) return { status: "error", message: "customerId not found." };
       } else if (args.customerName) {
         const check = await resolveCustomerMatch(String(args.customerName));
-        if (check.status === "match") customer = check.customer;
-        else if (check.status === "ambiguous") {
+        if (check.status === "match") {
+          customer = check.customer;
+          const suggestion = buildAliasSuggestion("customer", customer.id, customer.name, customer.aliases, String(args.customerName));
+          if (suggestion) aliasSuggestions.push(suggestion);
+        } else if (check.status === "ambiguous") {
           return { status: "needs_confirmation", message: "Multiple customers look similar — ask which one.", candidates: check.candidates };
         } else {
           return { status: "needs_new_customer", message: `No customer found matching "${check.query}". Ask the user, then create it with createCustomer.`, query: check.query };
@@ -570,25 +685,47 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         return { status: "error", message: "Provide customerId or customerName." };
       }
 
-      const rawItems = (args.items as Array<Record<string, unknown>>) ?? [];
       if (rawItems.length === 0) return { status: "error", message: "At least one line item is required." };
+
+      // One history fetch for this customer (all products' last prices come from it), plus unique product ids in a batch
+      // when there is no catalog to look them up in.
+      const uniqueIds = [...new Set(rawItems.filter((raw) => raw.productId).map((raw) => String(raw.productId)))];
+      const [catalog, customerInvoices, fetchedById] = await Promise.all([
+        catalogRead ?? Promise.resolve(null),
+        getInvoicesForCustomer(customer.id),
+        catalogRead ? Promise.resolve(null) : getProductsByIds(uniqueIds),
+      ]);
+      const productsById = new Map<string, Product>(fetchedById ?? []);
+      if (catalog) for (const p of catalog) productsById.set(p.id, p);
+      const lastPrices = buildLastPriceMap(customerInvoices);
+      ctx.trace?.("draft_reads", performance.now() - readsStart, {
+        catalogDocs: catalog?.length ?? 0,
+        historyDocs: customerInvoices.length,
+        items: rawItems.length,
+      });
 
       const resolvedItems: InvoiceLineItem[] = [];
       const priceWarnings: string[] = [];
 
       for (const raw of rawItems) {
         const quantityGiven = raw.quantity !== undefined ? Number(raw.quantity) : undefined;
-        const quantityMissing = !quantityGiven || quantityGiven <= 0;
+        // Treat a non-finite parse (e.g. Infinity) the same as "not given" — same graceful incomplete-draft path,
+        // not a hard failure of the whole order. (quantityGiven <= 0 already catches negative and -Infinity; only
+        // +Infinity needed this explicit check, since Infinity is truthy and Infinity <= 0 is false.)
+        const quantityMissing = !quantityGiven || !Number.isFinite(quantityGiven) || quantityGiven <= 0;
         const quantity = quantityMissing ? 0 : (quantityGiven as number);
 
         let product: Product | null = null;
         if (raw.productId) {
-          product = await getProductById(String(raw.productId));
+          product = productsById.get(String(raw.productId)) ?? null;
           if (!product) return { status: "error", message: `productId ${raw.productId} not found.` };
         } else if (raw.productName) {
-          const check = await resolveProductMatch(String(raw.productName));
-          if (check.status === "match") product = check.product;
-          else if (check.status === "ambiguous") {
+          const check = matchProduct(String(raw.productName), catalog!);
+          if (check.status === "match") {
+            product = check.product;
+            const suggestion = buildAliasSuggestion("product", product.id, product.name, product.aliases, String(raw.productName));
+            if (suggestion) aliasSuggestions.push(suggestion);
+          } else if (check.status === "ambiguous") {
             return {
               status: "needs_confirmation",
               message: `"${check.query}" matches multiple existing products — ask the user which one.`,
@@ -607,7 +744,7 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
           return { status: "error", message: "Each item needs productId or productName." };
         }
 
-        const lastPrice = customer ? await getLastPriceForCustomerProduct(customer.id, product.id) : null;
+        const lastPrice = lastPrices.get(product.id) ?? null;
         let price: number;
         let priceMissing = false;
         if (raw.price !== undefined) {
@@ -644,6 +781,7 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         });
       }
 
+      const commitStart = performance.now();
       const invoice = await createInvoice({
         customerId: customer.id,
         customerName: customer.name,
@@ -655,7 +793,9 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         status: "draft",
         createdBy: "ai",
         actor: "ai",
+        operationId,
       });
+      ctx.trace?.("invoice_commit", performance.now() - commitStart, { items: resolvedItems.length });
 
       const incompleteItems = resolvedItems.filter((it) => it.incomplete).map((it) => it.productName);
       return {
@@ -663,6 +803,7 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         invoice,
         priceWarnings,
         incompleteItems,
+        ...(aliasSuggestions.length > 0 ? { aliasSuggestions } : {}),
         ...(incompleteItems.length > 0
           ? {
               message:
@@ -718,87 +859,99 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
       if (!invoice) return { status: "not_found" };
 
       let product: Product | null = null;
+      let aliasSuggestion: AliasSuggestion | null = null;
       if (args.productId) product = await getProductById(String(args.productId));
       else if (args.productName) {
         const check = await resolveProductMatch(String(args.productName));
-        if (check.status === "match") product = check.product;
-        else if (check.status === "ambiguous") return { status: "needs_confirmation", candidates: check.candidates };
+        if (check.status === "match") {
+          product = check.product;
+          aliasSuggestion = buildAliasSuggestion("product", product.id, product.name, product.aliases, String(args.productName));
+        } else if (check.status === "ambiguous") return { status: "needs_confirmation", candidates: check.candidates };
         else return { status: "needs_new_product", query: check.query };
       }
       if (!product) return { status: "error", message: "Provide productId or productName." };
+      const chosen = product;
 
+      // Never guess: a missing/invalid quantity or a missing price with no catalog default must be asked, not assumed.
       const quantity = Number(args.quantity);
-      const price = args.price !== undefined ? Number(args.price) : product.defaultPrice;
-      const existingIdx = invoice.items.findIndex((it) => it.productId === product!.id);
-      const items = [...invoice.items];
-      if (existingIdx >= 0) {
-        const merged = { ...items[existingIdx] };
-        merged.quantity += quantity;
-        merged.lineTotal = Math.round(merged.quantity * merged.price * 100) / 100;
-        items[existingIdx] = merged;
-      } else {
-        items.push({
-          productId: product.id,
-          productName: product.name,
-          quantity,
-          unit: (args.unit as string) || product.defaultUnit,
-          price,
-          lineTotal: Math.round(quantity * price * 100) / 100,
-          barcode: product.barcode,
-        });
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        return { status: "needs_more_info", message: `Quantity for ${chosen.name} is missing or invalid — ask the user.` };
+      }
+      const price = args.price !== undefined ? Number(args.price) : chosen.defaultPrice;
+      if (!Number.isFinite(price) || price <= 0) {
+        return { status: "needs_more_info", message: `No price given and ${chosen.name} has no default price — ask the user for the price.` };
       }
 
-      const updated = await updateInvoiceWithLog({
+      // The line list is computed from the invoice as read INSIDE the transaction, so a concurrent edit is never overwritten.
+      const { stockWarnings, ...updated } = await updateInvoiceWithLog({
         invoiceId: invoice.id,
-        items,
+        items: (before) => {
+          const items = [...before.items];
+          const existingIdx = items.findIndex((it) => it.productId === chosen.id);
+          if (existingIdx >= 0) {
+            const merged = { ...items[existingIdx] };
+            merged.quantity += quantity;
+            merged.lineTotal = Math.round(merged.quantity * merged.price * 100) / 100;
+            items[existingIdx] = merged;
+          } else {
+            items.push({
+              productId: chosen.id,
+              productName: chosen.name,
+              quantity,
+              unit: (args.unit as string) || chosen.defaultUnit,
+              price,
+              lineTotal: Math.round(quantity * price * 100) / 100,
+              barcode: chosen.barcode,
+            });
+          }
+          return items;
+        },
         actor: "ai",
-        reason: String(args.reason ?? `Added ${quantity} x ${product.name}`),
+        reason: String(args.reason ?? `Added ${quantity} x ${chosen.name}`),
+        operationId,
       });
-      return { status: "updated", invoice: updated };
+      return { status: "updated", invoice: updated, ...(stockWarnings ? { stockWarnings } : {}), ...(aliasSuggestion ? { aliasSuggestions: [aliasSuggestion] } : {}) };
     }
 
     case "updateInvoiceItem": {
-      const invoice = await getInvoiceDoc(String(args.invoiceId));
-      if (!invoice) return { status: "not_found" };
-      const idx = findLineIndex(invoice, { productId: args.productId as string, productName: args.productName as string });
-      if (idx < 0) return { status: "error", message: "Could not find that line item on the invoice." };
-
-      const items = [...invoice.items];
-      const line = { ...items[idx] };
-      if (args.quantity !== undefined) line.quantity = Number(args.quantity);
-      if (args.price !== undefined) line.price = Number(args.price);
-      if (args.unit !== undefined) line.unit = String(args.unit);
-      line.lineTotal = Math.round(line.quantity * line.price * 100) / 100;
-      items[idx] = line;
-
-      const updated = await updateInvoiceWithLog({
-        invoiceId: invoice.id,
-        items,
+      const { stockWarnings, ...updated } = await updateInvoiceWithLog({
+        invoiceId: String(args.invoiceId),
+        items: (before) => {
+          const idx = findLineIndex(before, { productId: args.productId as string, productName: args.productName as string });
+          if (idx < 0) throw new DomainError("Could not find that line item on the invoice.");
+          const items = [...before.items];
+          const line = { ...items[idx] };
+          if (args.quantity !== undefined) line.quantity = Number(args.quantity);
+          if (args.price !== undefined) line.price = Number(args.price);
+          if (args.unit !== undefined) line.unit = String(args.unit);
+          line.lineTotal = Math.round(line.quantity * line.price * 100) / 100;
+          items[idx] = line;
+          return items;
+        },
         actor: "ai",
-        reason: String(args.reason ?? `Updated ${line.productName}`),
+        reason: String(args.reason ?? `Updated ${args.productName ?? "line item"}`),
+        operationId,
       });
-      return { status: "updated", invoice: updated };
+      return { status: "updated", invoice: updated, ...(stockWarnings ? { stockWarnings } : {}) };
     }
 
     case "removeInvoiceItem": {
-      const invoice = await getInvoiceDoc(String(args.invoiceId));
-      if (!invoice) return { status: "not_found" };
-      const idx = findLineIndex(invoice, { productId: args.productId as string, productName: args.productName as string });
-      if (idx < 0) return { status: "error", message: "Could not find that line item on the invoice." };
-      const removed = invoice.items[idx];
-      const items = invoice.items.filter((_, i) => i !== idx);
-
-      const updated = await updateInvoiceWithLog({
-        invoiceId: invoice.id,
-        items,
+      const { stockWarnings, ...updated } = await updateInvoiceWithLog({
+        invoiceId: String(args.invoiceId),
+        items: (before) => {
+          const idx = findLineIndex(before, { productId: args.productId as string, productName: args.productName as string });
+          if (idx < 0) throw new DomainError("Could not find that line item on the invoice.");
+          return before.items.filter((_, i) => i !== idx);
+        },
         actor: "ai",
-        reason: String(args.reason ?? `Removed ${removed.productName}`),
+        reason: String(args.reason ?? `Removed ${args.productName ?? "line item"}`),
+        operationId,
       });
-      return { status: "updated", invoice: updated };
+      return { status: "updated", invoice: updated, ...(stockWarnings ? { stockWarnings } : {}) };
     }
 
     case "updateInvoice": {
-      const updated = await updateInvoiceWithLog({
+      const { stockWarnings, ...updated } = await updateInvoiceWithLog({
         invoiceId: String(args.invoiceId),
         shipping: args.shipping !== undefined ? Number(args.shipping) : undefined,
         discount: args.discount !== undefined ? Number(args.discount) : undefined,
@@ -808,18 +961,20 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         customerName: args.customerName !== undefined ? String(args.customerName) : undefined,
         actor: "ai",
         reason: String(args.reason ?? "Updated by AI assistant"),
+        operationId,
       });
-      return { status: "updated", invoice: updated };
+      return { status: "updated", invoice: updated, ...(stockWarnings ? { stockWarnings } : {}) };
     }
 
     case "finalizeInvoice": {
-      const updated = await updateInvoiceWithLog({
+      const { stockWarnings, ...updated } = await updateInvoiceWithLog({
         invoiceId: String(args.invoiceId),
         status: "unpaid",
         actor: "ai",
         reason: "Invoice finalized",
+        operationId,
       });
-      return { status: "finalized", invoice: updated };
+      return { status: "finalized", invoice: updated, ...(stockWarnings ? { stockWarnings } : {}) };
     }
 
     case "copyInvoice": {
@@ -829,19 +984,24 @@ export async function executeTool(name: string, args: ToolArgs): Promise<unknown
         ? await getInvoiceByNumber(String(args.invoiceNumber))
         : null;
       if (!source) return { status: "not_found" };
-      const invoice = await copyInvoiceDoc({ sourceInvoiceId: source.id, actor: "ai" });
+      const invoice = await copyInvoiceDoc({ sourceInvoiceId: source.id, actor: "ai", operationId });
       return { status: "created", invoice };
     }
 
     case "recordPayment": {
-      const { invoice, payment } = await recordPaymentDoc({
+      const amount = Number(args.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return { status: "needs_more_info", message: "Payment amount must be a positive number — ask the user for the amount." };
+      }
+      const { invoice, payment, stockWarnings } = await recordPaymentDoc({
         invoiceId: String(args.invoiceId),
-        amount: Number(args.amount),
+        amount,
         method: args.method ? String(args.method) : undefined,
         note: args.note ? String(args.note) : undefined,
         actor: "ai",
+        operationId,
       });
-      return { status: "recorded", invoice, payment };
+      return { status: "recorded", invoice, payment, ...(stockWarnings ? { stockWarnings } : {}) };
     }
 
     case "searchPayments": {

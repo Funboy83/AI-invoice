@@ -1,7 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { watchCustomers, createCustomer, updateCustomer } from "@/lib/store";
+import { Suspense, useEffect, useState } from "react";
+import { watchCustomers } from "@/lib/store";
+import { createCustomerApi, updateCustomerApi } from "@/lib/businessApi";
+import { useSearchParams } from "next/navigation";
+import ChatFilterBanner from "@/components/ChatFilterBanner";
+import { useActionId } from "@/lib/useActionId";
+import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Customer } from "@/lib/types";
 import { Plus, Pencil, X } from "lucide-react";
 
@@ -30,16 +35,34 @@ const emptyForm: FormState = {
   notes: "",
 };
 
+// useSearchParams (filters opened from a chat shortcut) needs a Suspense boundary to build.
 export default function CustomersPage() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  return (
+    <Suspense fallback={null}>
+      <CustomersPageContent />
+    </Suspense>
+  );
+}
+
+function CustomersPageContent() {
+  const { authedFetch, notifyPossibleRevocation } = useAppAuth();
+  const [allCustomers, setCustomers] = useState<Customer[]>([]);
+  // Opened from a chat shortcut (/customers?id=…): show just that customer.
+  const focusId = useSearchParams().get("id");
+  const customers = focusId ? allCustomers.filter((c) => c.id === focusId) : allCustomers;
+
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const saveAction = useActionId(); // one stable id per open of the modal, reused across retries of THIS save
 
-  useEffect(() => watchCustomers(setCustomers), []);
+  useEffect(() => watchCustomers(setCustomers, (err) => isPermissionDenied(err) && notifyPossibleRevocation()), [notifyPossibleRevocation]);
 
   function openCreate() {
     setForm(emptyForm);
+    setError("");
+    saveAction.start();
     setModalOpen(true);
   }
 
@@ -56,12 +79,15 @@ export default function CustomersPage() {
       defaultShipping: c.defaultShipping !== undefined ? String(c.defaultShipping) : "",
       notes: c.notes ?? "",
     });
+    setError("");
+    saveAction.start();
     setModalOpen(true);
   }
 
   async function handleSave() {
     if (!form.name) return;
     setSaving(true);
+    setError("");
     const aliases = form.aliases
       .split(",")
       .map((a) => a.trim())
@@ -78,11 +104,13 @@ export default function CustomersPage() {
         notes: form.notes,
       };
       if (form.id) {
-        await updateCustomer(form.id, shared);
+        await updateCustomerApi(authedFetch, form.id, shared, saveAction.current());
       } else {
-        await createCustomer({ ...shared, aliases });
+        await createCustomerApi(authedFetch, { ...shared, aliases }, saveAction.current());
       }
       setModalOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save customer.");
     } finally {
       setSaving(false);
     }
@@ -102,6 +130,8 @@ export default function CustomersPage() {
           <Plus size={16} /> Add customer
         </button>
       </div>
+
+      {focusId && <ChatFilterBanner label="Đang xem khách hàng mở từ chat" clearHref="/customers" />}
 
       <div className="hidden md:block rounded-2xl border border-slate-200 bg-white overflow-hidden">
         <table className="w-full text-sm">
@@ -260,6 +290,7 @@ export default function CustomersPage() {
                   onChange={(e) => setForm({ ...form, notes: e.target.value })}
                 />
               </div>
+              {error && <p className="text-sm text-red-600">{error}</p>}
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button

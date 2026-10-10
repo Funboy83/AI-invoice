@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp, type FirebaseOptions } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth, type Auth } from "firebase/auth";
 
 const firebaseConfig: FirebaseOptions = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -13,3 +14,8 @@ const firebaseConfig: FirebaseOptions = {
 // Reuse the app instance across hot reloads and server/client calls.
 export const firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const db = getFirestore(firebaseApp);
+
+/** Firebase Auth (browser only) — identifies who is using the AI chat. Call from client components/effects. */
+export function getClientAuth(): Auth {
+  return getAuth(firebaseApp);
+}

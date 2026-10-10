@@ -8,6 +8,8 @@ export interface Product {
   defaultUnit: string;
   defaultPrice: number;
   cost?: number;
+  /** Stock tracking is opt-in: undefined means this product's stock is not tracked and invoicing never touches it. */
+  quantity?: number;
   active: boolean;
   notes?: string;
   createdAt: number;
@@ -63,6 +65,15 @@ export interface Invoice {
   createdAt: number;
   updatedAt: number;
   createdBy: "ai" | "user";
+  /** Snapshot of what's currently deducted from tracked products' stock for this invoice — the source of truth for
+   *  reversing/adjusting stock on edit or void, independent of (possibly since-changed) `items`. Empty/absent while
+   *  the invoice is a draft or void (nothing committed). */
+  deductedQuantities?: { productId: string; quantity: number }[];
+}
+
+/** draft/void never hold stock; unpaid/partial/paid do — the one place this rule is defined. */
+export function isCommittedStatus(status: InvoiceStatus): boolean {
+  return status !== "draft" && status !== "void";
 }
 
 export type LogActor = "ai" | "user";
@@ -87,6 +98,8 @@ export interface InvoiceLog {
   message: string;
   before?: unknown;
   after?: unknown;
+  /** Set when an AI job made the change — ties the audit entry to the exact tool call that produced it. */
+  operationId?: string;
 }
 
 export interface ChatMessage {
