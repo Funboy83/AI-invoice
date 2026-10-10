@@ -46,6 +46,16 @@ export interface InvoiceLineItem {
 
 export type InvoiceStatus = "draft" | "unpaid" | "partial" | "paid" | "void";
 
+/**
+ * Delivery orders: goods go out first, prices are set later. A delivery is a normal committed (unpaid) invoice with
+ * this tag, so stock and customer debt work as for any invoice. While `status` is "open" a line may have price $0
+ * (not "incomplete"); converting sets the final prices and moves it to "converted" — the tag stays for history.
+ */
+export interface DeliveryInfo {
+  status: "open" | "converted";
+  convertedAt?: number;
+}
+
 export interface Invoice {
   id: string;
   invoiceNumber: string;
@@ -65,6 +75,8 @@ export interface Invoice {
   createdAt: number;
   updatedAt: number;
   createdBy: "ai" | "user";
+  /** Present only on delivery orders (see DeliveryInfo). */
+  delivery?: DeliveryInfo;
   /** Snapshot of what's currently deducted from tracked products' stock for this invoice — the source of truth for
    *  reversing/adjusting stock on edit or void, independent of (possibly since-changed) `items`. Empty/absent while
    *  the invoice is a draft or void (nothing committed). */
@@ -105,6 +117,11 @@ export interface InvoiceLog {
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+}
+
+/** A delivery order still waiting for its final prices. Voided deliveries are never "open". */
+export function isOpenDelivery(invoice: Pick<Invoice, "delivery" | "paymentStatus">): boolean {
+  return invoice.delivery?.status === "open" && invoice.paymentStatus !== "void";
 }
 
 /** A draft invoice with any line missing quantity/price — needs the user to finish it or delete (void) it. */

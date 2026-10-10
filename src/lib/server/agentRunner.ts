@@ -6,6 +6,7 @@ import { choicesFromCandidates, cleanChoices, collectLinks, linksForToolResult, 
 import { ConfigError, getAdminDb } from "./firebaseAdmin";
 import { isMember } from "./membership";
 import { dispatchContinuation } from "./dispatch";
+import { deliverReplyToTelegram } from "./telegram";
 import { logJob, timed } from "./jobLog";
 import {
   HEARTBEAT_MS,
@@ -67,6 +68,8 @@ export interface RunnerDeps {
   budgetMs: number;
   /** Starts a fresh invocation for a job that must continue elsewhere; resolves to whether it was accepted. */
   continueJob(jobId: string): Promise<boolean>;
+  /** Called once a job has its final reply saved (finished, waiting for an answer, or failed) — e.g. to send it to Telegram. */
+  onJobDone?(job: JobDoc): Promise<void>;
 }
 
 export function defaultDeps(): RunnerDeps {
@@ -81,6 +84,7 @@ export function defaultDeps(): RunnerDeps {
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     budgetMs: INVOCATION_LIMIT_MS,
     continueJob: dispatchContinuation,
+    onJobDone: deliverReplyToTelegram,
   };
 }
 
@@ -284,6 +288,10 @@ export async function driveJob(jobId: string, deps: RunnerDeps = defaultDeps(), 
       break;
     }
     if (outcome.kind !== "finished") break;
+    if (deps.onJobDone) {
+      // A delivery problem (e.g. Telegram down) never fails the job: the reply is already saved in the app.
+      await deps.onJobDone(outcome.job).catch(() => logJob("reply_delivery", id as string, { ok: false }));
+    }
     id = await nextJobId(outcome.job);
   }
 }
@@ -539,6 +547,7 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
       const ctx: ToolContext = {
         operationId: operationId ?? undefined,
         canConfirm: job.canConfirm,
+        channel: job.origin?.channel ?? "app",
         trace: (phase, ms, fields) => logJob("tool_phase", jobId, { step, tool: use.name, phase, ms, ...fields }),
       };
       try {

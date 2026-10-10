@@ -340,3 +340,34 @@ describe("B2 (route level) — invalid financial input is rejected with no write
     expect(store.count("products")).toBe(0);
   });
 });
+
+describe("delivery orders (manual)", () => {
+  it("POST /invoices with delivery=true saves a $0 delivery order; PATCH with convertDelivery sets final prices once", async () => {
+    const { POST } = await import("./invoices/route");
+    const { PATCH } = await import("./invoices/[id]/route");
+    const res = await POST(post("/api/business/invoices", { customerName: "Hoa Lee", delivery: true, items: [{ productId: "p1", productName: "Milo", quantity: 4, price: 0 }] }));
+    expect(res.status).toBe(201);
+    const { invoice } = await res.json();
+    expect(invoice).toMatchObject({ paymentStatus: "unpaid", total: 0, delivery: { status: "open" } });
+
+    const items = [{ productId: "p1", productName: "Milo", quantity: 4, unit: "unit", price: 25 }];
+    const ok = await PATCH(patch(`/api/business/invoices/${invoice.id}`, { items, reason: "chốt giá", convertDelivery: true, operationId: "convert-key-1" }), { params: Promise.resolve({ id: invoice.id }) });
+    expect(ok.status).toBe(200);
+    const doc = store.read(`invoices/${invoice.id}`)!;
+    expect(doc).toMatchObject({ total: 100, balance: 100, paymentStatus: "unpaid" });
+    expect((doc.delivery as { status: string }).status).toBe("converted");
+
+    // Retrying the same request (same key) is a no-op replay, not a conflict.
+    const replay = await PATCH(patch(`/api/business/invoices/${invoice.id}`, { items, reason: "chốt giá", convertDelivery: true, operationId: "convert-key-1" }), { params: Promise.resolve({ id: invoice.id }) });
+    expect(replay.status).toBe(200);
+    // A second, different conversion is refused.
+    const again = await PATCH(patch(`/api/business/invoices/${invoice.id}`, { items, reason: "again", convertDelivery: true }), { params: Promise.resolve({ id: invoice.id }) });
+    expect(again.status).toBe(400);
+  });
+
+  it("a normal manual invoice is not tagged", async () => {
+    const { POST } = await import("./invoices/route");
+    const res = await POST(post("/api/business/invoices", { customerName: "Hoa Lee", delivery: "yes", items: [{ productName: "Milo", quantity: 1, price: 10 }] }));
+    expect((await res.json()).invoice.delivery).toBeUndefined();
+  });
+});

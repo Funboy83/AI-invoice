@@ -85,6 +85,8 @@ export interface CreateInvoiceInput {
   shipping?: number;
   discount?: number;
   notes?: string;
+  /** Tag as a delivery order (prices may stay $0 until "Chốt giá"). */
+  delivery?: boolean;
 }
 export async function createInvoiceApi(authedFetch: AuthedFetch, input: CreateInvoiceInput, operationId: string): Promise<{ invoice: Invoice; stockWarnings?: string[] }> {
   return call<{ invoice: Invoice; stockWarnings?: string[] }>(authedFetch, "POST", "/api/business/invoices", { ...input, operationId });
@@ -97,6 +99,8 @@ export interface UpdateInvoiceInput {
   status?: InvoiceStatus;
   notes?: string;
   reason: string;
+  /** "Chốt giá": these prices are final; the open delivery becomes a normal invoice. */
+  convertDelivery?: boolean;
 }
 export async function updateInvoiceApi(authedFetch: AuthedFetch, id: string, input: UpdateInvoiceInput, operationId: string): Promise<{ invoice: Invoice; stockWarnings?: string[] }> {
   return call<{ invoice: Invoice; stockWarnings?: string[] }>(authedFetch, "PATCH", `/api/business/invoices/${id}`, { ...input, operationId });

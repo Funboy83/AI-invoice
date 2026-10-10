@@ -25,6 +25,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       discount: body.discount === undefined ? undefined : requireFiniteNumber(body.discount, "Giảm giá"),
       status: body.status === undefined ? undefined : requireInvoiceStatus(body.status),
       notes: optionalString(body.notes, "Ghi chú"),
+      // "Chốt giá": the prices in this edit are final — the open delivery becomes a normal invoice (refused if it isn't one).
+      ...(body.convertDelivery === true ? { convertDelivery: true } : {}),
       actor: "user",
       reason: requireReason(body.reason),
       operationId: optionalOperationId(body.operationId),

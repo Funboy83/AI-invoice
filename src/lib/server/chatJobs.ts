@@ -64,6 +64,14 @@ export interface ConversationDoc {
   updatedAt: number;
 }
 
+/** Where a message came from when it was not typed in the app. Set only by the server (the Telegram webhook). */
+export interface JobOrigin {
+  channel: "telegram";
+  /** Telegram chat to send the reply to. */
+  chatId: number;
+  telegramUserId: number;
+}
+
 export interface JobDoc {
   conversationId: string;
   ownerUid: string;
@@ -86,6 +94,8 @@ export interface JobDoc {
   updatedAt: number;
   startedAt: number | null;
   finishedAt: number | null;
+  /** Absent for messages typed in the app. */
+  origin?: JobOrigin;
 }
 
 export interface StepDoc {
@@ -156,13 +166,18 @@ export interface AcceptResult {
  * Durably accepts a chat message. One transaction creates the user message, the job and the idempotency record, so
  * either everything exists (and a job ID can be returned) or nothing does. Retrying the same requestId is a no-op.
  */
-export async function acceptMessage(user: AuthedUser, input: { requestId: string; content: string }): Promise<AcceptResult> {
+export async function acceptMessage(
+  user: AuthedUser,
+  input: { requestId: string; content: string },
+  /** Telegram: its own conversation per Telegram account (never mixed with the in-app chat) and where to reply. */
+  origin?: JobOrigin
+): Promise<AcceptResult> {
   const content = (input.content ?? "").trim();
   if (!REQUEST_ID_RE.test(input.requestId ?? "")) throw new HttpError(400, "requestId không hợp lệ.");
   if (!content) throw new HttpError(400, "Tin nhắn trống.");
   if (content.length > MAX_MESSAGE_CHARS) throw new HttpError(400, `Tin nhắn quá dài (tối đa ${MAX_MESSAGE_CHARS} ký tự).`);
 
-  const cid = conversationIdFor(user.storeId, user.uid);
+  const cid = origin ? telegramConversationIdFor(user.storeId, user.uid, origin.telegramUserId) : conversationIdFor(user.storeId, user.uid);
   const cRef = convRef(cid);
   const reqRef = cRef.collection("requests").doc(input.requestId);
 
@@ -219,6 +234,7 @@ export async function acceptMessage(user: AuthedUser, input: { requestId: string
       updatedAt: now,
       startedAt: null,
       finishedAt: null,
+      ...(origin ? { origin } : {}),
     };
     const message: ChatMessageDoc = {
       ownerUid: user.uid,
@@ -240,6 +256,22 @@ export async function acceptMessage(user: AuthedUser, input: { requestId: string
   });
   logJob("accepted", accepted.jobId, { seq: accepted.seq, duplicate: accepted.duplicate, commitMs: performance.now() - acceptStart });
   return accepted;
+}
+
+/** The Telegram conversation of one app member on one Telegram account. */
+export const telegramConversationIdFor = (storeId: string, uid: string, telegramUserId: number) =>
+  `${conversationIdFor(storeId, uid)}__tg${telegramUserId}`;
+
+/** The saved reply to a job (after it finished or failed), for sending it on to Telegram. */
+export async function getReplyMessage(job: JobDoc): Promise<ChatMessageDoc | null> {
+  const snap = await messageRef(job.conversationId, replyOrder(job.seq)).get();
+  return snap.exists ? (snap.data() as ChatMessageDoc) : null;
+}
+
+/** A job's reply by conversation + job number — used when a Telegram button is tapped under that reply. */
+export async function getReplyMessageBySeq(conversationId: string, seq: number): Promise<ChatMessageDoc | null> {
+  const snap = await messageRef(conversationId, replyOrder(seq)).get();
+  return snap.exists ? (snap.data() as ChatMessageDoc) : null;
 }
 
 /* ---------------------------- claim / lease / queue ---------------------------- */
