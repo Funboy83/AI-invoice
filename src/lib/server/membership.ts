@@ -35,3 +35,16 @@ export async function isMember(db: Firestore, uid: string, storeId: string): Pro
   const data = snap.data() as Partial<MemberDoc> | undefined;
   return data?.storeId === storeId;
 }
+
+/**
+ * The store member with this login email, or null. Used by doors that identify a person by email rather than by a
+ * Firebase sign-in (Telegram, the outside-AI API key), so they are checked against the same live storeMembers list.
+ */
+export async function memberByEmail(db: Firestore, email: string, storeId: string): Promise<{ uid: string; email: string; storeId: string } | null> {
+  const wanted = email.trim().toLowerCase();
+  if (!wanted || !storeId) return null;
+  const snap = await db.collection(MEMBERS_COLLECTION).where("email", "==", wanted).limit(5).get();
+  const doc = snap.docs.find((d) => d.data().storeId === storeId);
+  if (!doc) return null;
+  return { uid: (doc.data().uid as string) || doc.id, email: wanted, storeId };
+}
