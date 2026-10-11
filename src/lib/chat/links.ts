@@ -55,6 +55,8 @@ export function linksForToolResult(tool: string, input: unknown, result: unknown
 
   switch (tool) {
     case "createInvoiceDraft":
+    case "createDeliveryOrder":
+    case "convertDelivery":
     case "getInvoice":
     case "addInvoiceItem":
     case "updateInvoiceItem":
@@ -100,6 +102,12 @@ export function linksForToolResult(tool: string, input: unknown, result: unknown
     case "getUnpaidInvoices":
       if (results && results.length > 0) out.push({ href: "/invoices?status=unpaid", label: "Invoice chưa thanh toán" });
       break;
+    case "getDeliveries": {
+      const list = Array.isArray(r.deliveries) ? r.deliveries : [];
+      if (list.length === 1) out.push(invoiceLink(list[0]));
+      if (list.length > 0) out.push({ href: "/invoices?tag=delivery", label: "Đơn giao hàng chưa chốt giá" });
+      break;
+    }
   }
   return out.filter((l): l is ChatLink => l !== null);
 }
@@ -150,7 +158,10 @@ export function cleanChoices(raw: unknown): string[] {
  */
 export function choicesFromCandidates(result: unknown): string[] {
   const r = obj(result);
-  if (!r || r.status !== "needs_confirmation" || !Array.isArray(r.candidates)) return [];
+  if (!r || r.status !== "needs_confirmation") return [];
+  // A yes/edit confirmation (e.g. a delivery order preview) names its own answer buttons.
+  if (Array.isArray(r.confirmChoices)) return cleanChoices(r.confirmChoices);
+  if (!Array.isArray(r.candidates)) return [];
   return cleanChoices(
     r.candidates.map((c) => {
       const o = obj(c);

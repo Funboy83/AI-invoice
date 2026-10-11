@@ -2,7 +2,7 @@ import { FieldPath, Timestamp, type DocumentReference, type Firestore, type Tran
 import { getAdminDb } from "./firebaseAdmin";
 import { DomainError, NotFoundError, OperationConflictError } from "@/lib/domainErrors";
 import { assertFiniteAmount, assertFiniteTotals, assertNonNegativeAmount, assertPositiveAmount, calcTotals, computePaymentStatus, invoiceItemsForWrite, sanitizeInvoiceItems } from "@/lib/invoiceMath";
-import { isCommittedStatus, type Customer, type Invoice, type InvoiceLineItem, type InvoiceLog, type InvoiceStatus, type LogActor, type Payment, type Product } from "@/lib/types";
+import { isCommittedStatus, isOpenDelivery, type Customer, type DeliveryInfo, type Invoice, type InvoiceLineItem, type InvoiceLog, type InvoiceStatus, type LogActor, type Payment, type Product } from "@/lib/types";
 
 /**
  * Admin-SDK mirror of src/lib/store.ts: same collections, same transactions, same idempotency ledger, same totals
@@ -284,6 +284,7 @@ function hydrateInvoice(id: string, data: Record<string, unknown>): Invoice {
     createdAt: toMillis(data.createdAt),
     updatedAt: toMillis(data.updatedAt),
     createdBy: (data.createdBy as "ai" | "user") ?? "user",
+    ...(data.delivery ? { delivery: data.delivery as DeliveryInfo } : {}),
     deductedQuantities: (data.deductedQuantities as { productId: string; quantity: number }[]) ?? [],
   };
 }
@@ -382,6 +383,8 @@ export async function createInvoice(input: {
   status?: InvoiceStatus;
   createdBy: "ai" | "user";
   actor: LogActor;
+  /** Tags the invoice as a delivery order (prices may stay $0 until it is converted). */
+  delivery?: DeliveryInfo;
   /** Makes the create idempotent: the same id never creates a second invoice or consumes a second number. */
   operationId?: string;
 }): Promise<Invoice & { stockWarnings?: string[] }> {
@@ -406,7 +409,7 @@ export async function createInvoice(input: {
   const willBeCommitted = isCommittedStatus(paymentStatus);
   const stockProductIds = willBeCommitted ? [...aggregateQuantitiesByProduct(items).keys()] : [];
 
-  const fingerprint = { customerId: input.customerId, customerName: input.customerName, items: input.items, shipping, discount, notes: input.notes, status: input.status, createdBy: input.createdBy };
+  const fingerprint = { customerId: input.customerId, customerName: input.customerName, items: input.items, shipping, discount, notes: input.notes, status: input.status, createdBy: input.createdBy, delivery: input.delivery };
   return runOnce(input.operationId, "createInvoice", fingerprint, async (tx) => {
     const counterSnap = await tx.get(counterRef);
     // Stock reads must happen here, before any write below — Firestore transactions require all reads before any write.
@@ -438,6 +441,7 @@ export async function createInvoice(input: {
       updatedAt: now,
       createdBy: input.createdBy,
       deductedQuantities,
+      ...(input.delivery ? { delivery: input.delivery } : {}),
     };
     tx.set(invoiceRef, payload);
     tx.set(logRef, {
@@ -445,7 +449,7 @@ export async function createInvoice(input: {
       timestamp: now,
       actor: input.actor,
       action: "create",
-      message: `Invoice ${invoiceNumber} created for ${input.customerName} (total $${total.toFixed(2)})`,
+      message: `${input.delivery ? "Delivery order" : "Invoice"} ${invoiceNumber} created for ${input.customerName} (total $${total.toFixed(2)})`,
       after: { items, shipping, discount, total },
       ...(input.operationId ? { operationId: input.operationId } : {}),
     });
@@ -463,6 +467,12 @@ export async function updateInvoiceWithLog(input: {
   notes?: string;
   customerId?: string;
   customerName?: string;
+  /**
+   * "Chốt giá": the open delivery becomes the final invoice (delivery.status → "converted"). Refused unless the
+   * invoice, as read inside the transaction, is an open delivery — so one is never converted twice. The timestamp
+   * is taken here, not from the caller, so a retry with the same operationId has the same fingerprint.
+   */
+  convertDelivery?: boolean;
   actor: LogActor;
   reason: string;
   operationId?: string;
@@ -486,6 +496,7 @@ export async function updateInvoiceWithLog(input: {
     notes: input.notes,
     customerId: input.customerId,
     customerName: input.customerName,
+    convertDelivery: input.convertDelivery,
     reason: input.reason,
   };
 
@@ -493,6 +504,9 @@ export async function updateInvoiceWithLog(input: {
     const snap = await tx.get(invoiceRef);
     if (!snap.exists) throw new NotFoundError("Invoice not found");
     const before = hydrateInvoice(snap.id, snap.data()!);
+    if (input.convertDelivery && !isOpenDelivery(before)) {
+      throw new DomainError(`Invoice #${before.invoiceNumber} is not an open delivery order (already converted, void, or not a delivery).`);
+    }
 
     // Financial invariants enforced HERE — the one boundary every caller (AI line-item tools and the manual edit
     // route) goes through. lineTotal is recomputed from quantity*price; exactly 0 (an AI "incomplete" line) is
@@ -527,6 +541,7 @@ export async function updateInvoiceWithLog(input: {
     if (input.notes !== undefined) updatedFields.notes = input.notes;
     if (input.customerId !== undefined) updatedFields.customerId = input.customerId;
     if (input.customerName !== undefined) updatedFields.customerName = input.customerName;
+    if (input.convertDelivery) updatedFields.delivery = { status: "converted", convertedAt: now } satisfies DeliveryInfo;
 
     for (const w of stockWrites) tx.update(w.ref, { quantity: w.quantity, updatedAt: now });
     tx.update(invoiceRef, updatedFields);
@@ -536,8 +551,8 @@ export async function updateInvoiceWithLog(input: {
       actor: input.actor,
       action: "update",
       message: input.reason,
-      before: { items: invoiceItemsForWrite(before.items), shipping: before.shipping, discount: before.discount, total: before.total, status: before.paymentStatus },
-      after: { items, shipping, discount, total, status: paymentStatus },
+      before: { items: invoiceItemsForWrite(before.items), shipping: before.shipping, discount: before.discount, total: before.total, status: before.paymentStatus, ...(before.delivery ? { delivery: before.delivery } : {}) },
+      after: { items, shipping, discount, total, status: paymentStatus, ...(updatedFields.delivery ? { delivery: updatedFields.delivery } : {}) },
       ...(input.operationId ? { operationId: input.operationId } : {}),
     });
 

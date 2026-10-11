@@ -8,9 +8,10 @@ import { createInvoiceApi, createCustomerApi, createProductApi, newOperationId }
 import ChatFilterBanner from "@/components/ChatFilterBanner";
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
-import { isInvoiceIncomplete, type Invoice, type Product, type Customer, type InvoiceLineItem } from "@/lib/types";
+import { isInvoiceIncomplete, isOpenDelivery, type Invoice, type Product, type Customer, type InvoiceLineItem } from "@/lib/types";
 import { Plus, X, Trash2, AlertTriangle } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
+import DeliveryBadge from "@/components/DeliveryBadge";
 
 const statusStyles: Record<string, string> = {
   draft: "bg-slate-100 text-slate-600",
@@ -44,10 +45,13 @@ function InvoicesPageContent() {
   const searchParams = useSearchParams();
   const customerFilter = searchParams.get("customer");
   const unpaidOnly = searchParams.get("status") === "unpaid";
+  // /invoices?tag=delivery: delivery orders still waiting for their final prices.
+  const deliveryOnly = searchParams.get("tag") === "delivery";
   const invoices = allInvoices.filter(
     (i) =>
       (!customerFilter || i.customerId === customerFilter) &&
-      (!unpaidOnly || i.paymentStatus === "unpaid" || i.paymentStatus === "partial")
+      (!unpaidOnly || i.paymentStatus === "unpaid" || i.paymentStatus === "partial") &&
+      (!deliveryOnly || isOpenDelivery(i))
   );
 
   const [products, setProducts] = useState<Product[]>([]);
@@ -58,6 +62,7 @@ function InvoicesPageContent() {
   const [shipping, setShipping] = useState("0");
   const [discount, setDiscount] = useState("0");
   const [notes, setNotes] = useState("");
+  const [isDelivery, setIsDelivery] = useState(false);
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -86,6 +91,7 @@ function InvoicesPageContent() {
     setShipping("0");
     setDiscount("0");
     setNotes("");
+    setIsDelivery(false);
     setLines([]);
     setError("");
     createAction.start();
@@ -151,6 +157,7 @@ function InvoicesPageContent() {
           shipping: Number(shipping) || 0,
           discount: Number(discount) || 0,
           notes,
+          ...(isDelivery ? { delivery: true } : {}),
         },
         createAction.current()
       );
@@ -179,11 +186,12 @@ function InvoicesPageContent() {
         </button>
       </div>
 
-      {(customerFilter || unpaidOnly) && (
+      {(customerFilter || unpaidOnly || deliveryOnly) && (
         <ChatFilterBanner
           label={[
             customerFilter ? `Invoice của ${invoices[0]?.customerName ?? "khách này"}` : "Tất cả invoice",
             unpaidOnly ? "chưa thanh toán" : "",
+            deliveryOnly ? "đơn giao chưa chốt giá" : "",
           ].filter(Boolean).join(" · ")}
           clearHref="/invoices"
         />
@@ -216,6 +224,11 @@ function InvoicesPageContent() {
                   <span className={`text-[11px] uppercase font-medium px-2 py-0.5 rounded-full ${statusStyles[inv.paymentStatus]}`}>
                     {inv.paymentStatus}
                   </span>
+                  {inv.delivery && (
+                    <span className="ml-1.5">
+                      <DeliveryBadge invoice={inv} />
+                    </span>
+                  )}
                   {isInvoiceIncomplete(inv) && (
                     <span className="ml-1.5 inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
                       <AlertTriangle size={11} /> incomplete
@@ -249,6 +262,11 @@ function InvoicesPageContent() {
                 {inv.paymentStatus}
               </span>
             </div>
+            {inv.delivery && (
+              <div className="mt-1">
+                <DeliveryBadge invoice={inv} />
+              </div>
+            )}
             {isInvoiceIncomplete(inv) && (
               <p className="flex items-center gap-1 text-[11px] font-medium text-amber-700 mt-1">
                 <AlertTriangle size={11} /> Incomplete — missing quantity/price
@@ -379,6 +397,19 @@ function InvoicesPageContent() {
                   onChange={(e) => setNotes(e.target.value)}
                 />
               </div>
+
+              <label className="flex items-start gap-2.5 rounded-lg border border-slate-200 p-3 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-violet-600"
+                  checked={isDelivery}
+                  onChange={(e) => setIsDelivery(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">Delivery order (đơn giao hàng)</span>
+                  <span className="block text-xs text-slate-500">Prices can stay $0 now and be set later with &quot;Chốt giá&quot;.</span>
+                </span>
+              </label>
 
               {error && <p className="text-sm text-red-600">{error}</p>}
 

@@ -25,7 +25,7 @@ import {
   DomainError,
   NotFoundError,
 } from "@/lib/server/businessStore";
-import type { Customer, Invoice, InvoiceLineItem, InvoiceStatus, Product } from "@/lib/types";
+import { isOpenDelivery, type Customer, type Invoice, type InvoiceLineItem, type InvoiceStatus, type Product } from "@/lib/types";
 
 /** Anthropic tool-use definitions exposed to the assistant. */
 export const toolDefinitions = [
@@ -353,6 +353,73 @@ export const toolDefinitions = [
     },
   },
   {
+    name: "createDeliveryOrder",
+    description:
+      "Create a DELIVERY ORDER: goods are delivered now and priced later. It is saved straight away as an unpaid invoice tagged Delivery (stock is taken, it shows in the customer's account), and any item without a price is saved at $0 — that is allowed for deliveries and is NOT an incomplete line. Use this (not createInvoiceDraft) when the user says it's a delivery / giao hàng / đơn giao / ship trước tính tiền sau, or asks for a delivery order. Customer and product matching works exactly like createInvoiceDraft (needs_confirmation / needs_new_customer / needs_new_product). Every item needs a quantity. Only pass a price if the user actually stated one — never fill in last/default prices. If the result is needs_confirmation with a preview, show the summary and ask with requestUserInput (use the confirmChoices as options); call again with confirmed=true only after she answers yes.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        customerId: { type: "string" },
+        customerName: { type: "string" },
+        originalOrderText: { type: "string", description: "The raw message the order came from." },
+        shipping: { type: "number" },
+        notes: { type: "string" },
+        confirmed: { type: "boolean", description: "Set true only after the user confirmed the preview in reply to your question." },
+        items: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              productId: { type: "string" },
+              productName: { type: "string" },
+              quantity: { type: "number" },
+              unit: { type: "string" },
+              price: { type: "number", description: "USD. Omit unless the user stated a price — it stays $0 until the delivery is converted." },
+            },
+          },
+        },
+      },
+      required: ["items"],
+    },
+  },
+  {
+    name: "getDeliveries",
+    description:
+      "List and count delivery orders, optionally for one customer. Default status 'open' = delivered but not yet priced/converted. Returns count, each delivery (number, date, items, which items still have no price) and the total quantity per product. Use for questions like 'chị Hoa có mấy đơn giao chưa tính tiền?'.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        customerId: { type: "string" },
+        customerName: { type: "string", description: "Matched like searchCustomer if customerId is not known." },
+        status: { type: "string", enum: ["open", "converted", "all"] },
+      },
+    },
+  },
+  {
+    name: "convertDelivery",
+    description:
+      "Turn an OPEN delivery order into the final priced invoice: sets the prices given and marks the delivery converted (same invoice number, still unpaid, the tag stays for history). Every line still at $0 must get a price in `prices` — an explicit 0 is accepted (e.g. a free sample). If a price is missing the result lists the items to ask about. Prices for products the customer bought before can be looked up with getLastPrice to suggest them, but ask before using them. Needs a short reason for the audit log.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        invoiceId: { type: "string" },
+        invoiceNumber: { type: "string" },
+        prices: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { productId: { type: "string" }, productName: { type: "string" }, price: { type: "number" } },
+            required: ["price"],
+          },
+        },
+        shipping: { type: "number" },
+        discount: { type: "number" },
+        reason: { type: "string" },
+      },
+      required: ["prices", "reason"],
+    },
+  },
+  {
     name: "requestUserInput",
     description:
       "Pause the task and ask the user something. Call this whenever you need missing information (quantity, price), a choice between similar customers/products, or approval before continuing — instead of guessing and instead of ending your reply with a question. The question is saved, the task waits, and the user's next message is the answer. Put the complete question in `question`.",
@@ -391,6 +458,8 @@ export const MUTATING_TOOLS: ReadonlySet<string> = new Set([
   "updateCustomer",
   "addCustomerAlias",
   "createInvoiceDraft",
+  "createDeliveryOrder",
+  "convertDelivery",
   "addInvoiceItem",
   "updateInvoiceItem",
   "removeInvoiceItem",
@@ -405,6 +474,8 @@ export interface ToolContext {
   operationId?: string;
   /** True only when this job is the user's reply to a question the AI asked — the only time force=true is honoured. */
   canConfirm?: boolean;
+  /** Where the message came from. Telegram messages must have a delivery order confirmed before it is saved. */
+  channel?: "app" | "telegram";
   /** Optional timing hook (phase name, ms, counts). Must never receive order text, names or other customer data. */
   trace?: (phase: string, ms: number, fields?: Record<string, number>) => void;
 }
@@ -479,12 +550,13 @@ async function resolveCustomerMatch(query: string): Promise<CustomerMatch> {
 }
 
 /**
- * productId → price on this customer's most recent non-void invoice containing it (first matching line within an
+ * productId → price on this customer's most recent non-void, priced invoice containing it (first matching line within an
  * invoice). Built once from one history fetch instead of re-scanning every invoice per product.
  */
 function buildLastPriceMap(customerInvoices: Invoice[]): Map<string, number> {
   const map = new Map<string, number>();
-  const relevant = customerInvoices.filter((i) => i.paymentStatus !== "void").sort((a, b) => b.createdAt - a.createdAt);
+  // Open deliveries are skipped: their $0 "not priced yet" lines are not a price this customer paid.
+  const relevant = customerInvoices.filter((i) => i.paymentStatus !== "void" && !isOpenDelivery(i)).sort((a, b) => b.createdAt - a.createdAt);
   for (const inv of relevant) {
     for (const line of inv.items) {
       if (line.productId && !map.has(line.productId)) map.set(line.productId, line.price);
@@ -515,6 +587,158 @@ function findLineIndex(invoice: Invoice, match: { productId?: string; productNam
     if (bestScore >= AMBIGUOUS_THRESHOLD) return best;
   }
   return -1;
+}
+
+type ResolvedOrder = {
+  customer: Customer;
+  resolvedItems: InvoiceLineItem[];
+  priceWarnings: string[];
+  aliasSuggestions: AliasSuggestion[];
+  /** Delivery mode: items given without a quantity (a delivery is never saved with quantity 0). */
+  missingQuantity: string[];
+};
+
+/**
+ * Matches the customer and every line of an order (shared by createInvoiceDraft and createDeliveryOrder). Returns
+ * `early` when the order can't be resolved yet (ask the user / create the customer or product first).
+ * "draft": a missing price falls back to last/default price, and anything still missing marks the line incomplete.
+ * "delivery": only a stated price is used, else $0 (allowed for deliveries, not incomplete).
+ */
+async function resolveOrder(args: ToolArgs, ctx: ToolContext, mode: "draft" | "delivery"): Promise<{ early: unknown } | ResolvedOrder> {
+  const rawItems = (args.items as Array<Record<string, unknown>>) ?? [];
+  const readsStart = performance.now();
+  // Every read this tool needs is done ONCE per execution (never once per line item) and never cached across
+  // executions, so prices are always read fresh. The catalog load overlaps with customer resolution.
+  const needsCatalog = rawItems.some((raw) => !raw.productId && raw.productName);
+  const catalogRead = needsCatalog ? getAllProducts() : null;
+  catalogRead?.catch(() => {}); // if we return early below, don't leave an unhandled rejection behind
+
+  // Resolve customer.
+  let customer: Customer | null = null;
+  const aliasSuggestions: AliasSuggestion[] = [];
+  if (args.customerId) {
+    customer = await getCustomerById(String(args.customerId));
+    if (!customer) return { early: { status: "error", message: "customerId not found." } };
+  } else if (args.customerName) {
+    const check = await resolveCustomerMatch(String(args.customerName));
+    if (check.status === "match") {
+      customer = check.customer;
+      const suggestion = buildAliasSuggestion("customer", customer.id, customer.name, customer.aliases, String(args.customerName));
+      if (suggestion) aliasSuggestions.push(suggestion);
+    } else if (check.status === "ambiguous") {
+      return { early: { status: "needs_confirmation", message: "Multiple customers look similar — ask which one.", candidates: check.candidates } };
+    } else {
+      return { early: { status: "needs_new_customer", message: `No customer found matching "${check.query}". Ask the user, then create it with createCustomer.`, query: check.query } };
+    }
+  } else {
+    return { early: { status: "error", message: "Provide customerId or customerName." } };
+  }
+
+  if (rawItems.length === 0) return { early: { status: "error", message: "At least one line item is required." } };
+
+  // One history fetch for this customer (all products' last prices come from it), plus unique product ids in a batch
+  // when there is no catalog to look them up in.
+  const uniqueIds = [...new Set(rawItems.filter((raw) => raw.productId).map((raw) => String(raw.productId)))];
+  const [catalog, customerInvoices, fetchedById] = await Promise.all([
+    catalogRead ?? Promise.resolve(null),
+    getInvoicesForCustomer(customer.id),
+    catalogRead ? Promise.resolve(null) : getProductsByIds(uniqueIds),
+  ]);
+  const productsById = new Map<string, Product>(fetchedById ?? []);
+  if (catalog) for (const p of catalog) productsById.set(p.id, p);
+  const lastPrices = buildLastPriceMap(customerInvoices);
+  ctx.trace?.("draft_reads", performance.now() - readsStart, {
+    catalogDocs: catalog?.length ?? 0,
+    historyDocs: customerInvoices.length,
+    items: rawItems.length,
+  });
+
+  const resolvedItems: InvoiceLineItem[] = [];
+  const priceWarnings: string[] = [];
+  const missingQuantity: string[] = [];
+
+  for (const raw of rawItems) {
+    const quantityGiven = raw.quantity !== undefined ? Number(raw.quantity) : undefined;
+    // Treat a non-finite parse (e.g. Infinity) the same as "not given" — same graceful incomplete-draft path,
+    // not a hard failure of the whole order. (quantityGiven <= 0 already catches negative and -Infinity; only
+    // +Infinity needed this explicit check, since Infinity is truthy and Infinity <= 0 is false.)
+    const quantityMissing = !quantityGiven || !Number.isFinite(quantityGiven) || quantityGiven <= 0;
+    const quantity = quantityMissing ? 0 : (quantityGiven as number);
+
+    let product: Product | null = null;
+    if (raw.productId) {
+      product = productsById.get(String(raw.productId)) ?? null;
+      if (!product) return { early: { status: "error", message: `productId ${raw.productId} not found.` } };
+    } else if (raw.productName) {
+      const check = matchProduct(String(raw.productName), catalog!);
+      if (check.status === "match") {
+        product = check.product;
+        const suggestion = buildAliasSuggestion("product", product.id, product.name, product.aliases, String(raw.productName));
+        if (suggestion) aliasSuggestions.push(suggestion);
+      } else if (check.status === "ambiguous") {
+        return { early: {
+          status: "needs_confirmation",
+          message: `"${check.query}" matches multiple existing products — ask the user which one.`,
+          candidates: check.candidates,
+          resolvedSoFar: resolvedItems,
+        } };
+      } else {
+        return { early: {
+          status: "needs_new_product",
+          message: `No product found matching "${check.query}". This may be a new item — confirm with the user, then create it with createProduct.`,
+          query: check.query,
+          resolvedSoFar: resolvedItems,
+        } };
+      }
+    } else {
+      return { early: { status: "error", message: "Each item needs productId or productName." } };
+    }
+
+    const lastPrice = lastPrices.get(product.id) ?? null;
+    let price: number;
+    let priceMissing = false;
+    if (mode === "delivery") {
+      // Deliveries are priced later: only a price the user stated is used, otherwise $0 (not "incomplete").
+      const given = raw.price !== undefined ? Number(raw.price) : NaN;
+      price = Number.isFinite(given) && given >= 0 ? given : 0;
+      if (raw.price !== undefined && lastPrice !== null && Math.abs(lastPrice - price) > 0.01) {
+        priceWarnings.push(`${product.name}: current order says $${price}, previous price for this customer was $${lastPrice}.`);
+      }
+    } else if (raw.price !== undefined) {
+      price = Number(raw.price);
+      if (lastPrice !== null && Math.abs(lastPrice - price) > 0.01) {
+        priceWarnings.push(`${product.name}: current order says $${price}, previous price for this customer was $${lastPrice}.`);
+      }
+    } else if (lastPrice !== null) {
+      price = lastPrice;
+      priceWarnings.push(`${product.name}: no price given, used this customer's last price $${lastPrice}.`);
+    } else if (product.defaultPrice > 0) {
+      price = product.defaultPrice;
+      priceWarnings.push(`${product.name}: no price given, used catalog default $${product.defaultPrice}.`);
+    } else {
+      price = 0;
+      priceMissing = true;
+      priceWarnings.push(`${product.name}: no price given and no price history/default — saved as $0, needs a price.`);
+    }
+
+    const incomplete = quantityMissing || priceMissing;
+    if (mode === "delivery" && quantityMissing) missingQuantity.push(product.name);
+    if (quantityMissing) {
+      priceWarnings.push(`${product.name}: no quantity given — saved with quantity 0, needs a quantity.`);
+    }
+
+    resolvedItems.push({
+      productId: product.id,
+      productName: product.name,
+      quantity,
+      unit: (raw.unit as string) || product.defaultUnit,
+      price,
+      lineTotal: Math.round(price * quantity * 100) / 100,
+      barcode: product.barcode,
+      ...(mode === "draft" ? { incomplete } : {}),
+    });
+  }
+  return { customer, resolvedItems, priceWarnings, aliasSuggestions, missingQuantity };
 }
 
 /**
@@ -656,130 +880,9 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
     }
 
     case "createInvoiceDraft": {
-      const rawItems = (args.items as Array<Record<string, unknown>>) ?? [];
-      const readsStart = performance.now();
-      // Every read this tool needs is done ONCE per execution (never once per line item) and never cached across
-      // executions, so prices are always read fresh. The catalog load overlaps with customer resolution.
-      const needsCatalog = rawItems.some((raw) => !raw.productId && raw.productName);
-      const catalogRead = needsCatalog ? getAllProducts() : null;
-      catalogRead?.catch(() => {}); // if we return early below, don't leave an unhandled rejection behind
-
-      // Resolve customer.
-      let customer: Customer | null = null;
-      const aliasSuggestions: AliasSuggestion[] = [];
-      if (args.customerId) {
-        customer = await getCustomerById(String(args.customerId));
-        if (!customer) return { status: "error", message: "customerId not found." };
-      } else if (args.customerName) {
-        const check = await resolveCustomerMatch(String(args.customerName));
-        if (check.status === "match") {
-          customer = check.customer;
-          const suggestion = buildAliasSuggestion("customer", customer.id, customer.name, customer.aliases, String(args.customerName));
-          if (suggestion) aliasSuggestions.push(suggestion);
-        } else if (check.status === "ambiguous") {
-          return { status: "needs_confirmation", message: "Multiple customers look similar — ask which one.", candidates: check.candidates };
-        } else {
-          return { status: "needs_new_customer", message: `No customer found matching "${check.query}". Ask the user, then create it with createCustomer.`, query: check.query };
-        }
-      } else {
-        return { status: "error", message: "Provide customerId or customerName." };
-      }
-
-      if (rawItems.length === 0) return { status: "error", message: "At least one line item is required." };
-
-      // One history fetch for this customer (all products' last prices come from it), plus unique product ids in a batch
-      // when there is no catalog to look them up in.
-      const uniqueIds = [...new Set(rawItems.filter((raw) => raw.productId).map((raw) => String(raw.productId)))];
-      const [catalog, customerInvoices, fetchedById] = await Promise.all([
-        catalogRead ?? Promise.resolve(null),
-        getInvoicesForCustomer(customer.id),
-        catalogRead ? Promise.resolve(null) : getProductsByIds(uniqueIds),
-      ]);
-      const productsById = new Map<string, Product>(fetchedById ?? []);
-      if (catalog) for (const p of catalog) productsById.set(p.id, p);
-      const lastPrices = buildLastPriceMap(customerInvoices);
-      ctx.trace?.("draft_reads", performance.now() - readsStart, {
-        catalogDocs: catalog?.length ?? 0,
-        historyDocs: customerInvoices.length,
-        items: rawItems.length,
-      });
-
-      const resolvedItems: InvoiceLineItem[] = [];
-      const priceWarnings: string[] = [];
-
-      for (const raw of rawItems) {
-        const quantityGiven = raw.quantity !== undefined ? Number(raw.quantity) : undefined;
-        // Treat a non-finite parse (e.g. Infinity) the same as "not given" — same graceful incomplete-draft path,
-        // not a hard failure of the whole order. (quantityGiven <= 0 already catches negative and -Infinity; only
-        // +Infinity needed this explicit check, since Infinity is truthy and Infinity <= 0 is false.)
-        const quantityMissing = !quantityGiven || !Number.isFinite(quantityGiven) || quantityGiven <= 0;
-        const quantity = quantityMissing ? 0 : (quantityGiven as number);
-
-        let product: Product | null = null;
-        if (raw.productId) {
-          product = productsById.get(String(raw.productId)) ?? null;
-          if (!product) return { status: "error", message: `productId ${raw.productId} not found.` };
-        } else if (raw.productName) {
-          const check = matchProduct(String(raw.productName), catalog!);
-          if (check.status === "match") {
-            product = check.product;
-            const suggestion = buildAliasSuggestion("product", product.id, product.name, product.aliases, String(raw.productName));
-            if (suggestion) aliasSuggestions.push(suggestion);
-          } else if (check.status === "ambiguous") {
-            return {
-              status: "needs_confirmation",
-              message: `"${check.query}" matches multiple existing products — ask the user which one.`,
-              candidates: check.candidates,
-              resolvedSoFar: resolvedItems,
-            };
-          } else {
-            return {
-              status: "needs_new_product",
-              message: `No product found matching "${check.query}". This may be a new item — confirm with the user, then create it with createProduct.`,
-              query: check.query,
-              resolvedSoFar: resolvedItems,
-            };
-          }
-        } else {
-          return { status: "error", message: "Each item needs productId or productName." };
-        }
-
-        const lastPrice = lastPrices.get(product.id) ?? null;
-        let price: number;
-        let priceMissing = false;
-        if (raw.price !== undefined) {
-          price = Number(raw.price);
-          if (lastPrice !== null && Math.abs(lastPrice - price) > 0.01) {
-            priceWarnings.push(`${product.name}: current order says $${price}, previous price for this customer was $${lastPrice}.`);
-          }
-        } else if (lastPrice !== null) {
-          price = lastPrice;
-          priceWarnings.push(`${product.name}: no price given, used this customer's last price $${lastPrice}.`);
-        } else if (product.defaultPrice > 0) {
-          price = product.defaultPrice;
-          priceWarnings.push(`${product.name}: no price given, used catalog default $${product.defaultPrice}.`);
-        } else {
-          price = 0;
-          priceMissing = true;
-          priceWarnings.push(`${product.name}: no price given and no price history/default — saved as $0, needs a price.`);
-        }
-
-        const incomplete = quantityMissing || priceMissing;
-        if (quantityMissing) {
-          priceWarnings.push(`${product.name}: no quantity given — saved with quantity 0, needs a quantity.`);
-        }
-
-        resolvedItems.push({
-          productId: product.id,
-          productName: product.name,
-          quantity,
-          unit: (raw.unit as string) || product.defaultUnit,
-          price,
-          lineTotal: Math.round(price * quantity * 100) / 100,
-          barcode: product.barcode,
-          incomplete,
-        });
-      }
+      const order = await resolveOrder(args, ctx, "draft");
+      if ("early" in order) return order.early;
+      const { customer, resolvedItems, priceWarnings, aliasSuggestions } = order;
 
       const commitStart = performance.now();
       const invoice = await createInvoice({
@@ -811,6 +914,142 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
             }
           : {}),
       };
+    }
+
+    case "createDeliveryOrder": {
+      const order = await resolveOrder(args, ctx, "delivery");
+      if ("early" in order) return order.early;
+      const { customer, resolvedItems, priceWarnings, aliasSuggestions, missingQuantity } = order;
+      if (missingQuantity.length > 0) {
+        return {
+          status: "needs_more_info",
+          message: `A delivery needs a quantity for every item. Ask the user how many: ${missingQuantity.join(", ")}.`,
+          missingQuantity,
+        };
+      }
+      const shipping = args.shipping !== undefined ? Number(args.shipping) : customer.defaultShipping ?? 0;
+      // Orders sent from Telegram are often typed in a hurry: show what was understood and save only after a "yes".
+      if (ctx.channel === "telegram" && !(args.confirmed === true && ctx.canConfirm)) {
+        return {
+          status: "needs_confirmation",
+          message:
+            "Nothing saved yet. Show the user this delivery order (customer, each item with quantity and unit, any price she gave) and ask with requestUserInput whether to save it, using confirmChoices as the options. If she says yes, call createDeliveryOrder again with the same items and confirmed=true; if she wants changes, apply them and show the preview again.",
+          preview: {
+            customer: { id: customer.id, name: customer.name },
+            items: resolvedItems.map((it) => ({ productId: it.productId, productName: it.productName, quantity: it.quantity, unit: it.unit, price: it.price })),
+            shipping,
+          },
+          confirmChoices: ["Đúng, lưu đơn giao", "Sửa lại"],
+          ...(aliasSuggestions.length > 0 ? { aliasSuggestions } : {}),
+        };
+      }
+      const { stockWarnings, ...invoice } = await createInvoice({
+        customerId: customer.id,
+        customerName: customer.name,
+        items: resolvedItems,
+        shipping,
+        discount: 0,
+        notes: args.notes ? String(args.notes) : undefined,
+        originalOrderText: args.originalOrderText ? String(args.originalOrderText) : undefined,
+        status: "unpaid",
+        delivery: { status: "open" },
+        createdBy: "ai",
+        actor: "ai",
+        operationId,
+      });
+      const unpricedItems = resolvedItems.filter((it) => it.price === 0).map((it) => it.productName);
+      return {
+        status: "created",
+        invoice,
+        priceWarnings,
+        unpricedItems,
+        message: unpricedItems.length
+          ? "Delivery order saved (unpaid, tagged Delivery). Items at $0 are fine for now — they get their price when the delivery is converted with convertDelivery."
+          : "Delivery order saved (unpaid, tagged Delivery).",
+        ...(stockWarnings ? { stockWarnings } : {}),
+        ...(aliasSuggestions.length > 0 ? { aliasSuggestions } : {}),
+      };
+    }
+
+    case "getDeliveries": {
+      let customerId = args.customerId ? String(args.customerId) : undefined;
+      if (!customerId && args.customerName) {
+        const check = await resolveCustomerMatch(String(args.customerName));
+        if (check.status === "ambiguous") return { status: "needs_confirmation", message: "Multiple customers look similar — ask which one.", candidates: check.candidates };
+        if (check.status === "not_found") return { status: "not_found", message: `No customer found matching "${check.query}".` };
+        customerId = check.customer.id;
+      }
+      const which = args.status === "converted" || args.status === "all" ? String(args.status) : "open";
+      const invoices = customerId ? await getInvoicesForCustomer(customerId) : await getAllInvoices();
+      const deliveries = invoices.filter(
+        (i) => i.delivery && i.paymentStatus !== "void" && (which === "all" || i.delivery.status === which)
+      );
+      const quantityByProduct = new Map<string, { productName: string; unit: string; quantity: number }>();
+      for (const d of deliveries) {
+        for (const it of d.items) {
+          const key = `${it.productId ?? it.productName}__${it.unit}`;
+          const row = quantityByProduct.get(key) ?? { productName: it.productName, unit: it.unit, quantity: 0 };
+          row.quantity += it.quantity;
+          quantityByProduct.set(key, row);
+        }
+      }
+      return {
+        status: which,
+        count: deliveries.length,
+        ...(customerId ? { customerId } : {}),
+        deliveries: deliveries.map((d) => ({
+          id: d.id,
+          invoiceNumber: d.invoiceNumber,
+          date: d.date,
+          customerId: d.customerId,
+          customerName: d.customerName,
+          deliveryStatus: d.delivery?.status,
+          items: d.items.map((it) => ({ productId: it.productId, productName: it.productName, quantity: it.quantity, unit: it.unit, price: it.price })),
+          unpricedItems: d.items.filter((it) => it.price === 0).map((it) => it.productName),
+          total: d.total,
+          balance: d.balance,
+        })),
+        quantityByProduct: [...quantityByProduct.values()],
+      };
+    }
+
+    case "convertDelivery": {
+      const target = args.invoiceId
+        ? await getInvoiceDoc(String(args.invoiceId))
+        : args.invoiceNumber
+        ? await getInvoiceByNumber(String(args.invoiceNumber))
+        : null;
+      if (!target) return { status: "not_found", message: "Delivery order not found — give its invoiceId or invoiceNumber." };
+      if (!target.delivery) return { status: "error", message: `Invoice #${target.invoiceNumber} is not a delivery order.` };
+      const prices = Array.isArray(args.prices) ? (args.prices as Array<Record<string, unknown>>) : [];
+      for (const p of prices) {
+        const price = Number(p.price);
+        if (!Number.isFinite(price) || price < 0) return { status: "needs_more_info", message: `Invalid price for ${p.productName ?? p.productId ?? "an item"} — ask the user.` };
+      }
+      const { stockWarnings, ...updated } = await updateInvoiceWithLog({
+        invoiceId: target.id,
+        items: (before) => {
+          const items = before.items.map((it) => ({ ...it }));
+          const priced = new Set<number>();
+          for (const p of prices) {
+            const idx = findLineIndex({ ...before, items }, { productId: p.productId as string | undefined, productName: p.productName as string | undefined });
+            if (idx < 0) throw new DomainError(`"${p.productName ?? p.productId}" is not on delivery #${before.invoiceNumber}.`);
+            items[idx].price = Number(p.price);
+            items[idx].lineTotal = Math.round(items[idx].quantity * items[idx].price * 100) / 100;
+            priced.add(idx);
+          }
+          const missing = items.filter((it, i) => it.price === 0 && !priced.has(i)).map((it) => it.productName);
+          if (missing.length) throw new DomainError(`Still no price for: ${missing.join(", ")}. Ask the user for these prices (an explicit 0 is allowed for a free item).`);
+          return items;
+        },
+        shipping: args.shipping !== undefined ? Number(args.shipping) : undefined,
+        discount: args.discount !== undefined ? Number(args.discount) : undefined,
+        convertDelivery: true, // checked inside the transaction, so a delivery is never converted twice
+        actor: "ai",
+        reason: String(args.reason ?? `Delivery #${target.invoiceNumber} converted to final invoice`),
+        operationId,
+      });
+      return { status: "converted", invoice: updated, ...(stockWarnings ? { stockWarnings } : {}) };
     }
 
     case "getInvoice": {
@@ -877,8 +1116,10 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
       if (!Number.isFinite(quantity) || quantity <= 0) {
         return { status: "needs_more_info", message: `Quantity for ${chosen.name} is missing or invalid — ask the user.` };
       }
-      const price = args.price !== undefined ? Number(args.price) : chosen.defaultPrice;
-      if (!Number.isFinite(price) || price <= 0) {
+      // An open delivery is priced later: a missing price is $0 there, never a guessed default.
+      const delivery = isOpenDelivery(invoice);
+      const price = args.price !== undefined ? Number(args.price) : delivery ? 0 : chosen.defaultPrice;
+      if (!Number.isFinite(price) || price < 0 || (price === 0 && !delivery)) {
         return { status: "needs_more_info", message: `No price given and ${chosen.name} has no default price — ask the user for the price.` };
       }
 

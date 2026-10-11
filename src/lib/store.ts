@@ -31,6 +31,7 @@ import {
 import { db } from "./firebase";
 import type {
   Customer,
+  DeliveryInfo,
   Invoice,
   InvoiceLineItem,
   InvoiceLog,
@@ -326,6 +327,7 @@ function hydrateInvoice(id: string, data: Record<string, unknown>): Invoice {
     createdAt: toMillis(data.createdAt),
     updatedAt: toMillis(data.updatedAt),
     createdBy: (data.createdBy as "ai" | "user") ?? "user",
+    ...(data.delivery ? { delivery: data.delivery as DeliveryInfo } : {}),
   };
 }
 

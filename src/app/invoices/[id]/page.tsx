@@ -7,9 +7,10 @@ import { updateInvoiceApi, recordPaymentApi, createProductApi, newOperationId } 
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Invoice, InvoiceLog, InvoiceLineItem, Product, InvoiceStatus, Payment } from "@/lib/types";
-import { isInvoiceIncomplete } from "@/lib/types";
+import { isInvoiceIncomplete, isOpenDelivery } from "@/lib/types";
 import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign, AlertTriangle } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
+import DeliveryBadge from "@/components/DeliveryBadge";
 
 const COMPANY_NAME = process.env.NEXT_PUBLIC_COMPANY_NAME || "Company Name";
 
@@ -43,6 +44,7 @@ export default function InvoiceDetailPage() {
   const [draftStatus, setDraftStatus] = useState<InvoiceStatus>("unpaid");
   const [draftNotes, setDraftNotes] = useState("");
   const [reason, setReason] = useState("");
+  const [convertDelivery, setConvertDelivery] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -93,6 +95,7 @@ export default function InvoiceDetailPage() {
     setDraftStatus(invoice.paymentStatus);
     setDraftNotes(invoice.notes ?? "");
     setReason("");
+    setConvertDelivery(false);
     setError("");
     editAction.start();
     setEditing(true);
@@ -134,6 +137,10 @@ export default function InvoiceDetailPage() {
       setError("Pick or add a product for every line item first.");
       return;
     }
+    if (convertDelivery) {
+      const unpriced = draftItems.filter((l) => l.price === 0).map((l) => l.productName);
+      if (unpriced.length && !window.confirm(`These items are still $0: ${unpriced.join(", ")}. Finalize anyway?`)) return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -147,6 +154,7 @@ export default function InvoiceDetailPage() {
           status: draftStatus,
           notes: draftNotes,
           reason: reason.trim(),
+          ...(convertDelivery ? { convertDelivery: true } : {}),
         },
         editAction.current()
       );
@@ -230,10 +238,22 @@ export default function InvoiceDetailPage() {
             <p className="text-sm text-slate-500 mt-1">{invoice.customerName}</p>
             <p className="text-xs text-slate-400 mt-1">{new Date(invoice.date).toLocaleString()}</p>
           </div>
-          <span className={`text-xs uppercase font-medium px-2.5 py-1 rounded-full ${statusStyles[invoice.paymentStatus]}`}>
-            {invoice.paymentStatus}
-          </span>
+          <div className="flex flex-col items-end gap-1.5">
+            <span className={`text-xs uppercase font-medium px-2.5 py-1 rounded-full ${statusStyles[invoice.paymentStatus]}`}>
+              {invoice.paymentStatus}
+            </span>
+            <DeliveryBadge invoice={invoice} size="md" />
+          </div>
         </div>
+
+        {isOpenDelivery(invoice) && !editing && (
+          <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800 print:hidden">
+            <p className="font-medium">Delivery order — prices not final yet</p>
+            <p className="mt-0.5 text-violet-700">
+              Items at $0 are allowed until you set the prices. Tap Edit, enter the prices and tick &quot;Chốt giá&quot; to make this the final invoice.
+            </p>
+          </div>
+        )}
 
         {stockWarnings.length > 0 && (
           <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 print:hidden">
@@ -460,6 +480,20 @@ export default function InvoiceDetailPage() {
                 placeholder="e.g. Customer requested quantity change"
               />
             </div>
+            {isOpenDelivery(invoice) && (
+              <label className="flex items-start gap-2.5 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 accent-violet-600"
+                  checked={convertDelivery}
+                  onChange={(e) => setConvertDelivery(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">Chốt giá — these prices are final</span>
+                  <span className="block text-xs text-violet-700">The delivery becomes the final invoice (same number, still unpaid).</span>
+                </span>
+              </label>
+            )}
             {error && <p className="text-sm text-red-600">{error}</p>}
             <div className="flex justify-end gap-2">
               <button onClick={() => setEditing(false)} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100">
