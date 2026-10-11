@@ -37,18 +37,40 @@ export function levenshtein(a: string, b: string): number {
   return matrix[al][bl];
 }
 
+/**
+ * Word match: when every word typed in `query` is a word of `name` (or, for words of 3+ letters, the start of one),
+ * the name scores 0.75–0.95 — higher the more of the name the query covers. This lets a short brand ("coca", "milo",
+ * "hao hao", "khong do") find a long catalog name like "Coca Cola lon 12oz thùng 24", which whole-string comparison
+ * scores far too low. Returns 0 when any typed word is missing.
+ */
+export function wordMatchScore(query: string, name: string): number {
+  const qWords = normalizeVN(query).split(" ").filter(Boolean);
+  const nWords = normalizeVN(name).split(" ").filter(Boolean);
+  if (qWords.length === 0 || nWords.length === 0) return 0;
+  const allFound = qWords.every((w) => nWords.some((t) => t === w || (w.length >= 3 && t.startsWith(w))));
+  if (!allFound) return 0;
+  return 0.75 + 0.2 * Math.min(1, qWords.length / nWords.length);
+}
+
 /** Returns a similarity ratio between 0 (no match) and 1 (identical), comparing accent-stripped forms. */
 export function similarity(a: string, b: string): number {
   const s1 = normalizeVN(a);
   const s2 = normalizeVN(b);
   if (!s1 || !s2) return 0;
   if (s1 === s2) return 1;
+  let score: number;
   if (s1.includes(s2) || s2.includes(s1)) {
-    return 0.9 * (Math.min(s1.length, s2.length) / Math.max(s1.length, s2.length)) + 0.1;
+    score = 0.9 * (Math.min(s1.length, s2.length) / Math.max(s1.length, s2.length)) + 0.1;
+  } else {
+    score = 1 - levenshtein(s1, s2) / Math.max(s1.length, s2.length);
   }
-  const dist = levenshtein(s1, s2);
-  const maxLen = Math.max(s1.length, s2.length);
-  return 1 - dist / maxLen;
+  return Math.max(score, wordMatchScore(a, b));
+}
+
+/** Case- and space-insensitive comparison that KEEPS Vietnamese accents ("Chị Hòa" ≠ "Chị Hoa"). */
+export function sameWithAccents(a: string, b: string): boolean {
+  const norm = (s: string) => s.normalize("NFC").toLowerCase().replace(/\s+/g, " ").trim();
+  return norm(a) !== "" && norm(a) === norm(b);
 }
 
 export interface Match<T> {

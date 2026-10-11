@@ -1,4 +1,4 @@
-import { findSimilarWithAliases, normalizeVN, similarity } from "@/lib/similarity";
+import { findSimilarWithAliases, normalizeVN, sameWithAccents, similarity, wordMatchScore, type Match } from "@/lib/similarity";
 import {
   getAllProducts,
   getProductById,
@@ -495,6 +495,30 @@ export function operationIdFor(jobId: string, toolUseId: string): string {
 const AUTO_MATCH_THRESHOLD = 0.82;
 const AMBIGUOUS_THRESHOLD = 0.55;
 
+/** The best match must beat the runner-up by at least this much to be picked without asking. */
+const CLEAR_LEAD = 0.08;
+
+/**
+ * Picks a match without asking only when it is clearly the one meant: the typed text equals exactly one candidate's
+ * name/alias (with accents first, so "Chị Hòa" picks Chị Hòa, not Chị Hoa), or the best score is above the
+ * auto-match cutoff and clearly ahead of the next one. Ties ("chi hoa" vs Chị Hoa and Chị Hòa, "gao" vs two kinds
+ * of rice) return null so the user is asked.
+ */
+function pickConfident<T>(query: string, matches: Match<T>[], namesOf: (item: T) => string[]): T | null {
+  const exact = matches.filter((m) => namesOf(m.item).some((n) => sameWithAccents(query, n)));
+  if (exact.length === 1) return exact[0].item;
+  if (exact.length > 1) return null;
+  // Same idea without accents: "co lan" is exactly Cô Lan (Cô Lành only starts the same way), but "chi hoa" is
+  // exactly both Chị Hoa and Chị Hòa, so that one is asked.
+  const exactNoAccents = matches.filter((m) => namesOf(m.item).some((n) => normalizeVN(n) === normalizeVN(query)));
+  if (exactNoAccents.length === 1) return exactNoAccents[0].item;
+  if (exactNoAccents.length > 1) return null;
+  const [best, second] = matches;
+  if (!best || best.score < AUTO_MATCH_THRESHOLD) return null;
+  if (second && best.score - second.score < CLEAR_LEAD) return null;
+  return best.item;
+}
+
 type AliasSuggestion = { kind: "product" | "customer"; id: string; name: string; inputText: string };
 
 /**
@@ -526,7 +550,13 @@ type ProductMatch =
 function matchProduct(query: string, products: Product[]): ProductMatch {
   const matches = findSimilarWithAliases(query, products, (p) => p.name, (p) => p.aliases, AMBIGUOUS_THRESHOLD);
   if (matches.length === 0) return { status: "not_found", query };
-  if (matches[0].score >= AUTO_MATCH_THRESHOLD) return { status: "match", product: matches[0].item };
+  const confident = pickConfident(query, matches, (p) => [p.name, ...p.aliases]);
+  if (confident) return { status: "match", product: confident };
+  // A short brand name ("coca") that only ONE product contains as words is that product, even though its score
+  // stays below the auto-match cutoff because the catalog name is long.
+  if (matches.length === 1 && [matches[0].item.name, ...matches[0].item.aliases].some((t) => wordMatchScore(query, t) > 0)) {
+    return { status: "match", product: matches[0].item };
+  }
   return {
     status: "ambiguous",
     query,
@@ -547,7 +577,8 @@ async function resolveCustomerMatch(query: string): Promise<CustomerMatch> {
   const customers = await getAllCustomers();
   const matches = findSimilarWithAliases(query, customers, (c) => c.name, (c) => c.aliases, AMBIGUOUS_THRESHOLD);
   if (matches.length === 0) return { status: "not_found", query };
-  if (matches[0].score >= AUTO_MATCH_THRESHOLD) return { status: "match", customer: matches[0].item };
+  const confident = pickConfident(query, matches, (c) => [c.name, ...c.aliases]);
+  if (confident) return { status: "match", customer: confident };
   return {
     status: "ambiguous",
     query,
@@ -559,20 +590,20 @@ async function resolveCustomerMatch(query: string): Promise<CustomerMatch> {
  * productId → price on this customer's most recent non-void, priced invoice containing it (first matching line within an
  * invoice). Built once from one history fetch instead of re-scanning every invoice per product.
  */
-function buildLastPriceMap(customerInvoices: Invoice[]): Map<string, number> {
-  const map = new Map<string, number>();
+function buildLastPriceMap(customerInvoices: Invoice[]): Map<string, { price: number; unit: string }> {
+  const map = new Map<string, { price: number; unit: string }>();
   // Open deliveries are skipped: their $0 "not priced yet" lines are not a price this customer paid.
   const relevant = customerInvoices.filter((i) => i.paymentStatus !== "void" && !isOpenDelivery(i)).sort((a, b) => b.createdAt - a.createdAt);
   for (const inv of relevant) {
     for (const line of inv.items) {
-      if (line.productId && !map.has(line.productId)) map.set(line.productId, line.price);
+      if (line.productId && !map.has(line.productId)) map.set(line.productId, { price: line.price, unit: line.unit });
     }
   }
   return map;
 }
 
 async function getLastPriceForCustomerProduct(customerId: string, productId: string): Promise<number | null> {
-  return buildLastPriceMap(await getInvoicesForCustomer(customerId)).get(productId) ?? null;
+  return buildLastPriceMap(await getInvoicesForCustomer(customerId)).get(productId)?.price ?? null;
 }
 
 function findLineIndex(invoice: Invoice, match: { productId?: string; productName?: string }): number {
@@ -700,27 +731,41 @@ async function resolveOrder(args: ToolArgs, ctx: ToolContext, mode: "draft" | "d
       return { early: { status: "error", message: "Each item needs productId or productName." } };
     }
 
-    const lastPrice = lastPrices.get(product.id) ?? null;
+    const lastSeen = lastPrices.get(product.id);
+    // An old line saved without a unit was sold in the product's own unit.
+    const lastLine = lastSeen ? { price: lastSeen.price, unit: lastSeen.unit || product.defaultUnit } : null;
+    const lastPrice = lastLine?.price ?? null;
+    // A price the app fills in is only valid for the unit it was charged in: "2 thùng" must not get the per-can price.
+    const orderedUnit = typeof raw.unit === "string" && raw.unit.trim() ? raw.unit : null;
+    const unitFits = (unit: string) => !orderedUnit || normalizeVN(orderedUnit) === normalizeVN(unit);
     let price: number;
     let priceMissing = false;
     if (mode === "delivery") {
       // Deliveries are priced later: only a price the user stated is used, otherwise $0 (not "incomplete").
       const given = raw.price !== undefined ? Number(raw.price) : NaN;
       price = Number.isFinite(given) && given >= 0 ? given : 0;
-      if (raw.price !== undefined && lastPrice !== null && Math.abs(lastPrice - price) > 0.01) {
+      if (raw.price !== undefined && lastLine && unitFits(lastLine.unit) && lastPrice !== null && Math.abs(lastPrice - price) > 0.01) {
         priceWarnings.push(`${product.name}: current order says $${price}, previous price for this customer was $${lastPrice}.`);
       }
     } else if (raw.price !== undefined) {
       price = Number(raw.price);
-      if (lastPrice !== null && Math.abs(lastPrice - price) > 0.01) {
+      if (lastLine && unitFits(lastLine.unit) && lastPrice !== null && Math.abs(lastPrice - price) > 0.01) {
         priceWarnings.push(`${product.name}: current order says $${price}, previous price for this customer was $${lastPrice}.`);
       }
-    } else if (lastPrice !== null) {
-      price = lastPrice;
-      priceWarnings.push(`${product.name}: no price given, used this customer's last price $${lastPrice}.`);
-    } else if (product.defaultPrice > 0) {
+    } else if (lastLine && unitFits(lastLine.unit)) {
+      price = lastLine.price;
+      priceWarnings.push(`${product.name}: no price given, used this customer's last price $${lastLine.price}.`);
+    } else if (product.defaultPrice > 0 && unitFits(product.defaultUnit)) {
       price = product.defaultPrice;
       priceWarnings.push(`${product.name}: no price given, used catalog default $${product.defaultPrice}.`);
+    } else if (lastLine || product.defaultPrice > 0) {
+      price = 0;
+      priceMissing = true;
+      const knownUnit = lastLine ? lastLine.unit : product.defaultUnit;
+      const knownPrice = lastLine ? lastLine.price : product.defaultPrice;
+      priceWarnings.push(
+        `${product.name}: ordered by "${orderedUnit}" but the known price is $${knownPrice} per "${knownUnit}" — saved as $0, needs a price per "${orderedUnit}" (or the quantity in "${knownUnit}"). Ask the user.`
+      );
     } else {
       price = 0;
       priceMissing = true;
