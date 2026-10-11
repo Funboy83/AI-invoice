@@ -61,5 +61,6 @@ service cloud.firestore {
     // businessStore.ts's transactions — closed entirely, not even readable, since no legitimate UI need exists.
     match /counters/{id}     { allow read, write: if false; }
     match /operations/{id}   { allow read, write: if false; }
+    match /apiPendingActions/{id} { allow read, write: if false; }
   }
 }

@@ -25,6 +25,7 @@ import {
   DomainError,
   NotFoundError,
 } from "@/lib/server/businessStore";
+import { calcTotals } from "@/lib/invoiceMath";
 import { isOpenDelivery, type Customer, type Invoice, type InvoiceLineItem, type InvoiceStatus, type Product } from "@/lib/types";
 
 /** Anthropic tool-use definitions exposed to the assistant. */
@@ -475,7 +476,12 @@ export interface ToolContext {
   /** True only when this job is the user's reply to a question the AI asked — the only time force=true is honoured. */
   canConfirm?: boolean;
   /** Where the message came from. Telegram messages must have a delivery order confirmed before it is saved. */
-  channel?: "app" | "telegram";
+  channel?: "app" | "telegram" | "api";
+  /**
+   * Outside AI apps (API / MCP, see src/lib/server/externalApi.ts): createInvoiceDraft and createDeliveryOrder match
+   * everything and return what WOULD be saved (status "preview", with `pinnedArgs`) without writing anything.
+   */
+  previewOnly?: boolean;
   /** Optional timing hook (phase name, ms, counts). Must never receive order text, names or other customer data. */
   trace?: (phase: string, ms: number, fields?: Record<string, number>) => void;
 }
@@ -742,6 +748,62 @@ async function resolveOrder(args: ToolArgs, ctx: ToolContext, mode: "draft" | "d
 }
 
 /**
+ * What a create tool WOULD save, for the outside-AI confirm step (ctx.previewOnly). `pinnedArgs` is the same order
+ * with the matched customer and product ids filled in, so confirming saves exactly what was shown — the names are
+ * not fuzzy-matched a second time. Quantities and stated prices are passed through unchanged (an unknown price stays
+ * unknown, so an incomplete line is still incomplete when it is saved); for a draft, a price the app filled in from
+ * the customer's last price or the catalog is pinned too.
+ */
+function orderPreview(args: ToolArgs, order: ResolvedOrder, mode: "draft" | "delivery", shipping: number, discount: number) {
+  const rawItems = (args.items as Array<Record<string, unknown>>) ?? [];
+  const { customer, resolvedItems, priceWarnings } = order;
+  const pinnedItems = resolvedItems.map((it, i) => {
+    const raw = rawItems[i] ?? {};
+    const keepPrice = mode === "draft" && !it.incomplete ? it.price : raw.price;
+    return {
+      productId: it.productId,
+      ...(raw.quantity !== undefined ? { quantity: raw.quantity } : {}),
+      unit: it.unit,
+      ...(keepPrice !== undefined ? { price: keepPrice } : {}),
+    };
+  });
+  const { subtotal, total } = calcTotals(resolvedItems, shipping, discount);
+  return {
+    status: "preview",
+    preview: {
+      kind: mode === "draft" ? "invoice draft" : "delivery order",
+      customer: { id: customer.id, name: customer.name },
+      items: resolvedItems.map((it) => ({
+        productId: it.productId,
+        productName: it.productName,
+        quantity: it.quantity,
+        unit: it.unit,
+        price: it.price,
+        lineTotal: it.lineTotal,
+        ...(it.incomplete ? { incomplete: true } : {}),
+      })),
+      shipping,
+      discount,
+      subtotal,
+      total,
+      priceWarnings,
+      ...(mode === "draft"
+        ? { incompleteItems: resolvedItems.filter((it) => it.incomplete).map((it) => it.productName) }
+        : { unpricedItems: resolvedItems.filter((it) => it.price === 0).map((it) => it.productName) }),
+    },
+    pinnedArgs: {
+      ...args,
+      customerId: customer.id,
+      customerName: undefined,
+      shipping,
+      ...(mode === "draft" ? { discount } : {}),
+      items: pinnedItems,
+      confirmed: undefined,
+    },
+  };
+}
+
+/**
  * Runs one tool. Business-rule failures (DomainError) of mutating tools come back as a normal `error`/`not_found`
  * result for the AI. Anything else (network, Firestore outage…) is rethrown so the job retries the SAME operation
  * id rather than telling the AI it failed and letting it try again under a new one.
@@ -883,14 +945,17 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
       const order = await resolveOrder(args, ctx, "draft");
       if ("early" in order) return order.early;
       const { customer, resolvedItems, priceWarnings, aliasSuggestions } = order;
+      const shipping = args.shipping !== undefined ? Number(args.shipping) : customer.defaultShipping ?? 0;
+      const discount = args.discount !== undefined ? Number(args.discount) : 0;
+      if (ctx.previewOnly) return orderPreview(args, order, "draft", shipping, discount);
 
       const commitStart = performance.now();
       const invoice = await createInvoice({
         customerId: customer.id,
         customerName: customer.name,
         items: resolvedItems,
-        shipping: args.shipping !== undefined ? Number(args.shipping) : customer.defaultShipping ?? 0,
-        discount: args.discount !== undefined ? Number(args.discount) : 0,
+        shipping,
+        discount,
         notes: args.notes ? String(args.notes) : undefined,
         originalOrderText: args.originalOrderText ? String(args.originalOrderText) : undefined,
         status: "draft",
@@ -928,6 +993,7 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
         };
       }
       const shipping = args.shipping !== undefined ? Number(args.shipping) : customer.defaultShipping ?? 0;
+      if (ctx.previewOnly) return orderPreview(args, order, "delivery", shipping, 0);
       // Orders sent from Telegram are often typed in a hurry: show what was understood and save only after a "yes".
       if (ctx.channel === "telegram" && !(args.confirmed === true && ctx.canConfirm)) {
         return {

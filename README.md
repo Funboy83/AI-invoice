@@ -110,6 +110,19 @@ Setup checklist (none of this is automatic — see also "Release order" below):
 
 Run the tests with `npm test` (in-memory Firestore fakes; never touches a real database). Run `npm run test:emulator` for **real** Firestore rules verification (needs Java + `firebase-tools`, both local devDependencies/tools — never deployed; see "Testing access control" below).
 
+## Outside AI apps: API and MCP server
+
+Claude, ChatGPT or a script can use the store's data through the **same tools** the in-app chat uses (`src/lib/server/externalApi.ts`, over `src/lib/ai/tools.ts`). Off unless configured:
+
+- `AI_API_ENABLED=true`
+- `AI_API_KEYS="her@example.com:<random key, 32+ letters/digits>, …"` — each key belongs to an existing store member (checked live, so `members:remove` also cuts off the key). Make a key with `openssl rand -base64 33 | tr '+/' '-_'`.
+
+Endpoints:
+- MCP (Streamable HTTP, JSON responses): `POST /api/mcp` with `Authorization: Bearer <key>`, or `POST /api/mcp/<key>` for apps whose connector screen only takes a URL (claude.ai, ChatGPT). Treat that link like a password.
+- REST: `GET /api/v1/tools` (list + input schemas), `POST /api/v1/tools/<name>` with the arguments as JSON. Key in `Authorization: Bearer` or `X-API-Key`.
+
+What it can do: read tools (customers, products, invoices, debt, unpaid, deliveries, payments, last price), plus `createInvoiceDraft` and `createDeliveryOrder`, which only **preview** and return a one-time `confirmToken`; `confirmAction` saves exactly what was previewed (30-minute expiry, a repeat returns the same invoice). Payments, edits, voids, delivery pricing and customer/product changes are not exposed (docs/OPERATING_POLICY.md rule 5).
+
 ## Testing access control
 
 - `npm test` (fake Firestore, always run, never touches a real database): membership logic (`src/lib/server/membership.test.ts`), `authenticate()`'s header contract, every `/api/business/*` route's authorization/validation/no-partial-write behavior (`src/app/api/business/business.routes.test.ts`), and background-job revocation — three independently-necessary checks (claim-time, before-each-model-turn, before-each-tool-execution-wave) each proven by a dedicated test in `src/lib/server/agentRunner.membership.test.ts`.

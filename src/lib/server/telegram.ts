@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { getAdminDb } from "./firebaseAdmin";
+import { memberByEmail } from "./membership";
 import { HttpError, currentStoreId, type AuthedUser } from "./auth";
 import { workerBaseUrl } from "./dispatch";
 import { logJob } from "./jobLog";
@@ -216,11 +217,7 @@ export interface TgUpdate {
 async function memberForTelegramUser(cfg: TelegramConfig, telegramUserId: number): Promise<AuthedUser | null> {
   const email = cfg.allowed.get(telegramUserId);
   if (!email) return null;
-  const storeId = currentStoreId();
-  const snap = await getAdminDb().collection("storeMembers").where("email", "==", email).limit(5).get();
-  const doc = snap.docs.find((d) => d.data().storeId === storeId);
-  if (!doc) return null;
-  return { uid: (doc.data().uid as string) || doc.id, email, storeId };
+  return memberByEmail(getAdminDb(), email, currentStoreId());
 }
 
 const WELCOME =
