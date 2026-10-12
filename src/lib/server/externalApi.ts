@@ -16,10 +16,11 @@ import { workerBaseUrl } from "./dispatch";
  *
  * What it can do (narrow on purpose — docs/OPERATING_POLICY.md rule 5, "new surfaces start narrow"):
  *   - read: search/get customers, products, invoices, debt, unpaid list, deliveries, payments, last price;
- *   - create an invoice draft or a delivery order, in two steps: the create call only PREVIEWS (nothing is saved)
- *     and returns a one-time confirm token; `confirmAction` with that token saves exactly what was previewed.
- * Not exposed: payments, editing or voiding invoices, converting deliveries (price changes), creating or changing
- * customers/products. Those stay in the app until each gets its own approval step.
+ *   - create an invoice draft or a delivery order, and create or edit a product (incl. adding a nickname), in two
+ *     steps: the call only PREVIEWS (nothing is saved) and returns a one-time confirm token; `confirmAction` with
+ *     that token saves exactly what was previewed.
+ * Not exposed: payments, editing or voiding invoices, converting deliveries (price changes), deleting products,
+ * creating or changing customers. Those stay in the app until each gets its own approval step.
  */
 
 export interface ApiConfig {
@@ -102,8 +103,11 @@ const READ_TOOLS = [
   "searchPayments",
 ] as const;
 
-/** Create tools that go through preview → confirmAction. */
-const CONFIRM_TOOLS = ["createInvoiceDraft", "createDeliveryOrder"] as const;
+/** Order tools that go through preview → confirmAction. */
+const ORDER_TOOLS = ["createInvoiceDraft", "createDeliveryOrder"] as const;
+/** Product tools that go through preview → confirmAction. A product's price change never touches past invoices. */
+const PRODUCT_TOOLS = ["createProduct", "updateProduct", "addProductAlias"] as const;
+const CONFIRM_TOOLS: readonly string[] = [...ORDER_TOOLS, ...PRODUCT_TOOLS];
 
 export const CONFIRM_ACTION = "confirmAction";
 /** ChatGPT's connectors (outside Developer mode, and deep research) only use tools with exactly these two names. */
@@ -122,6 +126,9 @@ export interface ExternalTool {
 const CONFIRM_NOTE =
   " OUTSIDE-APP RULE: this call only PREVIEWS — nothing is saved. It returns status needs_confirmation with the preview and a confirmToken. Show the preview to the person (customer, items, quantities, prices, totals and any warnings) and call confirmAction with the token only after they say yes. If they want changes, call this tool again with the corrected order to get a new preview.";
 
+const PRODUCT_CONFIRM_NOTE =
+  " OUTSIDE-APP RULE: this call only PREVIEWS — nothing is saved. It returns status needs_confirmation with the preview (the new product, or each field's old and new value) and a confirmToken. Show it to the person and call confirmAction with the token only after they say yes. Changing a price changes only the product's default price; past invoices keep theirs.";
+
 function stripProperty(schema: Record<string, unknown>, prop: string): Record<string, unknown> {
   const properties = { ...(schema.properties as Record<string, unknown>) };
   delete properties[prop];
@@ -135,12 +142,16 @@ function buildCatalog(): ExternalTool[] {
     const t = byName.get(name)!;
     out.push({ name, description: t.description, inputSchema: t.input_schema as Record<string, unknown>, readOnly: true });
   }
-  for (const name of CONFIRM_TOOLS) {
+  for (const name of ORDER_TOOLS) {
     const t = byName.get(name)!;
     // The chat-only `confirmed` flag means nothing here: confirming is done with confirmAction's token.
     const schema = stripProperty(t.input_schema as Record<string, unknown>, "confirmed");
     const description = t.description.replace(/ If the result is needs_confirmation with a preview[^]*$/, "") + CONFIRM_NOTE;
     out.push({ name, description, inputSchema: schema, readOnly: false });
+  }
+  for (const name of PRODUCT_TOOLS) {
+    const t = byName.get(name)!;
+    out.push({ name, description: t.description + PRODUCT_CONFIRM_NOTE, inputSchema: t.input_schema as Record<string, unknown>, readOnly: false });
   }
   out.push(
     {
@@ -160,7 +171,7 @@ function buildCatalog(): ExternalTool[] {
   out.push({
     name: CONFIRM_ACTION,
     description:
-      "Save an invoice draft or delivery order that was previewed by createInvoiceDraft or createDeliveryOrder. Call only after the person has seen the preview and said yes. Saves exactly what was previewed (same customer, products, quantities and prices). Each token works once and expires after 30 minutes; calling again with the same token returns the same saved invoice instead of saving it twice.",
+      "Save something that was previewed by createInvoiceDraft, createDeliveryOrder, createProduct, updateProduct or addProductAlias. Call only after the person has seen the preview and said yes. Saves exactly what was previewed (same customer, products, quantities and prices, or the same product changes). Each token works once and expires after 30 minutes; calling again with the same token returns the same result instead of saving it twice.",
     inputSchema: {
       type: "object",
       properties: { confirmToken: { type: "string", description: "The confirmToken from the preview." } },
@@ -178,9 +189,9 @@ const externalToolNames = new Set(externalTools.map((t) => t.name));
 export const EXTERNAL_INSTRUCTIONS = [
   "This is the invoice app of a small Vietnamese wholesale/grocery store. Customer and product names are often Vietnamese, typed without accents or as nicknames; search tools match them fuzzily.",
   "All amounts are USD. The app computes every total, balance and debt — always report the numbers it returns, never your own arithmetic.",
-  "Search before you act. If a tool returns needs_confirmation with candidates, ask the person which one they mean. If it returns needs_new_customer or needs_new_product, tell them to add it in the app first (this connection cannot create customers or products).",
-  "Creating an invoice draft or a delivery order takes two steps: the create tool returns a preview and a confirmToken; show the preview, and call confirmAction only after the person says yes. Never say something was saved until confirmAction returns status created.",
-  "This connection cannot record payments, edit or void invoices, or set final prices on deliveries — those are done in the app.",
+  "Search before you act. If a tool returns needs_confirmation with candidates, ask the person which one they mean. If it returns needs_new_product, offer to add it with createProduct. If it returns needs_new_customer, tell them to add the customer in the app first (this connection cannot create customers).",
+  "Creating an invoice draft or a delivery order, and creating or editing a product (createProduct, updateProduct, addProductAlias), take two steps: the tool returns a preview and a confirmToken; show the preview, and call confirmAction only after the person says yes. Never say something was saved until confirmAction returns status created, updated or alias_added.",
+  "This connection cannot record payments, edit or void invoices, set final prices on deliveries, delete products, or create or change customers — those are done in the app.",
 ].join("\n");
 
 /** Runs one outside-AI tool call as `user`. Unknown names are refused; business errors come back as results. */
@@ -189,7 +200,7 @@ export async function runExternalTool(name: string, args: Record<string, unknown
   if (name === CONFIRM_ACTION) return confirmAction(String(args.confirmToken ?? ""), user);
   if (name === SEARCH) return searchAll(String(args.query ?? ""));
   if (name === FETCH) return fetchOne(String(args.id ?? ""));
-  if ((CONFIRM_TOOLS as readonly string[]).includes(name)) {
+  if (CONFIRM_TOOLS.includes(name)) {
     const result = (await executeTool(name, args, { channel: "api", previewOnly: true })) as Record<string, unknown>;
     if (result.status !== "preview") return result; // needs_confirmation / needs_new_customer / needs_more_info / error…
     const token = randomBytes(24).toString("base64url");
@@ -287,12 +298,13 @@ async function confirmAction(token: string, user: AuthedUser): Promise<unknown> 
   const pending = snap.exists ? (snap.data() as { tool: string; args: Record<string, unknown>; uid: string; storeId: string; expiresAt: number }) : null;
   // A token from another person's key is treated as unknown, so it reveals nothing.
   if (!pending || pending.uid !== user.uid || pending.storeId !== user.storeId) {
-    return { status: "not_found", message: "Unknown confirmToken. Preview the order again to get a new one." };
+    return { status: "not_found", message: "Unknown confirmToken. Preview it again to get a new one." };
   }
   if (Date.now() > pending.expiresAt) {
-    return { status: "expired", message: "This preview expired. Preview the order again and ask the person to confirm." };
+    return { status: "expired", message: "This preview expired. Preview it again and ask the person to confirm." };
   }
   // The operation id is fixed per token: the store's idempotency ledger makes a second confirm (a retry, a double
   // tap) return the invoice saved the first time instead of creating a second one.
-  return executeTool(pending.tool, pending.args, { channel: "api", operationId: `api_${id.slice(0, 40)}` });
+  // canConfirm: the person said yes to this exact preview (it is what lets a previewed force=true product save).
+  return executeTool(pending.tool, pending.args, { channel: "api", operationId: `api_${id.slice(0, 40)}`, canConfirm: true });
 }

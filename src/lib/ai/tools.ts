@@ -25,7 +25,7 @@ import {
   DomainError,
   NotFoundError,
 } from "@/lib/server/businessStore";
-import { calcTotals } from "@/lib/invoiceMath";
+import { assertNonNegativeAmount, calcTotals } from "@/lib/invoiceMath";
 import { isOpenDelivery, type Customer, type Invoice, type InvoiceLineItem, type InvoiceStatus, type Product } from "@/lib/types";
 
 /** Anthropic tool-use definitions exposed to the assistant. */
@@ -478,8 +478,9 @@ export interface ToolContext {
   /** Where the message came from. Telegram messages must have a delivery order confirmed before it is saved. */
   channel?: "app" | "telegram" | "api";
   /**
-   * Outside AI apps (API / MCP, see src/lib/server/externalApi.ts): createInvoiceDraft and createDeliveryOrder match
-   * everything and return what WOULD be saved (status "preview", with `pinnedArgs`) without writing anything.
+   * Outside AI apps (API / MCP, see src/lib/server/externalApi.ts): createInvoiceDraft, createDeliveryOrder and the
+   * product tools (createProduct, updateProduct, addProductAlias) check everything and return what WOULD be saved
+   * (status "preview", with `pinnedArgs`) without writing anything.
    */
   previewOnly?: boolean;
   /** Optional timing hook (phase name, ms, counts). Must never receive order text, names or other customer data. */
@@ -848,6 +849,104 @@ function orderPreview(args: ToolArgs, order: ResolvedOrder, mode: "draft" | "del
   };
 }
 
+/* ------------------- product previews (outside-AI confirm step, ctx.previewOnly) ------------------- */
+
+/** The product fields updateProduct may change, in the order a preview lists them. */
+const PRODUCT_EDIT_FIELDS = ["name", "defaultUnit", "defaultPrice", "cost", "quantity", "category", "notes", "active"] as const;
+const PRODUCT_AMOUNT_FIELDS = new Set(["defaultPrice", "cost", "quantity"]);
+const PRICE_NOTE = "Only the product's default price changes. Invoices already made keep their prices.";
+
+function productFieldValue(field: string, value: unknown): unknown {
+  if (field === "active") return Boolean(value);
+  if (PRODUCT_AMOUNT_FIELDS.has(field)) return Number(value);
+  return String(value);
+}
+
+/**
+ * What createProduct WOULD save. Runs the same checks as the real save (amounts, and the duplicate check above it),
+ * so a confirm cannot fail on something the preview let through. force=true goes through with a warning listing
+ * the similar products; confirming the preview is the person's explicit "yes, a new separate product".
+ */
+async function productCreatePreview(args: ToolArgs) {
+  const name = String(args.name ?? "").trim();
+  if (!name) return { status: "error", message: "A product needs a name." };
+  if (args.defaultPrice === undefined) return { status: "needs_more_info", message: "What is the default price (USD)?" };
+  const fields: Record<string, unknown> = { name };
+  for (const field of ["defaultPrice", "cost", "quantity"] as const) {
+    if (args[field] === undefined) continue;
+    const value = Number(args[field]);
+    assertNonNegativeAmount(value, field);
+    fields[field] = value;
+  }
+  const aliases = (Array.isArray(args.aliases) ? args.aliases : []).map((a) => String(a).trim()).filter(Boolean);
+  for (const field of ["category", "barcode", "notes"] as const) if (args[field]) fields[field] = String(args[field]);
+  const check = await resolveProductMatch(name);
+  const similar = check.status === "match" ? [summarizeProduct(check.product)] : check.status === "ambiguous" ? check.candidates : [];
+  return {
+    status: "preview",
+    preview: {
+      action: "Create a new product",
+      product: { ...fields, defaultUnit: args.defaultUnit ? String(args.defaultUnit) : "unit", aliases, stockTracked: fields.quantity !== undefined },
+      ...(similar.length > 0 ? { warning: "Similar products already exist. Saving makes a new, separate product.", similarProducts: similar } : {}),
+    },
+    pinnedArgs: { ...fields, ...(args.defaultUnit ? { defaultUnit: String(args.defaultUnit) } : {}), aliases, force: similar.length > 0 },
+  };
+}
+
+/** What updateProduct WOULD change: each field as it is now and as it would be. Nothing on past invoices changes. */
+async function productUpdatePreview(args: ToolArgs) {
+  const product = await getProductById(String(args.productId));
+  if (!product) return { status: "not_found", message: "Product not found." };
+  const changes: { field: string; from: unknown; to: unknown }[] = [];
+  const pinned: Record<string, unknown> = { productId: product.id };
+  for (const field of PRODUCT_EDIT_FIELDS) {
+    if (args[field] === undefined) continue;
+    const to = productFieldValue(field, args[field]);
+    if (field === "name" && !String(to).trim()) return { status: "error", message: "The name cannot be empty." };
+    if (PRODUCT_AMOUNT_FIELDS.has(field)) assertNonNegativeAmount(to as number, field);
+    const from = (product as unknown as Record<string, unknown>)[field] ?? null;
+    if (from === to) continue;
+    changes.push({ field, from, to });
+    pinned[field] = to;
+  }
+  if (changes.length === 0) return { status: "unchanged", message: "Nothing to change: the product already has these values." };
+  return {
+    status: "preview",
+    preview: {
+      action: "Change a product",
+      product: { id: product.id, name: product.name, unit: product.defaultUnit },
+      changes,
+      ...(changes.some((c) => c.field === "defaultPrice") ? { note: PRICE_NOTE } : {}),
+    },
+    pinnedArgs: pinned,
+  };
+}
+
+/** What addProductAlias WOULD save, with a warning when the nickname already points at another product. */
+async function productAliasPreview(args: ToolArgs) {
+  const alias = String(args.alias ?? "").trim();
+  if (!alias) return { status: "error", message: "The nickname is empty." };
+  const products = await getAllProducts();
+  const product = products.find((p) => p.id === String(args.productId));
+  if (!product) return { status: "not_found", message: "Product not found." };
+  if (product.aliases.some((a) => a.toLowerCase() === alias.toLowerCase())) {
+    return { status: "unchanged", message: `"${alias}" is already a nickname of ${product.name}.` };
+  }
+  const others = findSimilarWithAliases(alias, products.filter((p) => p.id !== product.id), (p) => p.name, (p) => p.aliases, AUTO_MATCH_THRESHOLD);
+  return {
+    status: "preview",
+    preview: {
+      action: "Add a nickname to a product",
+      product: { id: product.id, name: product.name, aliases: product.aliases },
+      alias,
+      ...(others.length > 0
+        ? { warning: "This nickname also looks like other products; orders using it may need asking.", alsoMatches: others.slice(0, 3).map((m) => summarizeProduct(m.item)) }
+        : {}),
+    },
+    pinnedArgs: { productId: product.id, alias },
+  };
+}
+
 /**
  * Runs one tool. Business-rule failures (DomainError) of mutating tools come back as a normal `error`/`not_found`
  * result for the AI. Anything else (network, Firestore outage…) is rethrown so the job retries the SAME operation
@@ -879,7 +978,8 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
 
     case "createProduct": {
       const name_ = String(args.name);
-      if (!args.force || !ctx.canConfirm) {
+      // An outside-AI preview may carry force=true: the person's confirm of that preview is the explicit "yes".
+      if (!args.force || !(ctx.canConfirm || ctx.previewOnly)) {
         const check = await resolveProductMatch(name_);
         if (check.status !== "not_found") {
           return {
@@ -889,6 +989,7 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
           };
         }
       }
+      if (ctx.previewOnly) return productCreatePreview(args);
       const product = await createProductDoc({
         name: name_,
         aliases: (args.aliases as string[]) ?? [],
@@ -905,6 +1006,7 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
     }
 
     case "updateProduct": {
+      if (ctx.previewOnly) return productUpdatePreview(args);
       await updateProductDoc(String(args.productId), {
         ...(args.name !== undefined ? { name: String(args.name) } : {}),
         ...(args.defaultUnit !== undefined ? { defaultUnit: String(args.defaultUnit) } : {}),
@@ -919,6 +1021,7 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
     }
 
     case "addProductAlias": {
+      if (ctx.previewOnly) return productAliasPreview(args);
       await addProductAliasDoc(String(args.productId), String(args.alias), operationId);
       return { status: "alias_added" };
     }

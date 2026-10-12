@@ -121,7 +121,7 @@ Endpoints:
 - MCP (Streamable HTTP, JSON responses): `POST /api/mcp` with `Authorization: Bearer <key>`, or `POST /api/mcp/<key>` for apps whose connector screen only takes a URL (claude.ai, ChatGPT). Treat that link like a password.
 - REST: `GET /api/v1/tools` (list + input schemas), `POST /api/v1/tools/<name>` with the arguments as JSON. Key in `Authorization: Bearer` or `X-API-Key`.
 
-What it can do: read tools (customers, products, invoices, debt, unpaid, deliveries, payments, last price), the generic `search` (empty query lists customers) and `fetch` that ChatGPT connectors look for, plus `createInvoiceDraft` and `createDeliveryOrder`, which only **preview** and return a one-time `confirmToken`; `confirmAction` saves exactly what was previewed (30-minute expiry, a repeat returns the same invoice). Payments, edits, voids, delivery pricing and customer/product changes are not exposed (docs/OPERATING_POLICY.md rule 5).
+What it can do: read tools (customers, products, invoices, debt, unpaid, deliveries, payments, last price), the generic `search` (empty query lists customers) and `fetch` that ChatGPT connectors look for, plus `createInvoiceDraft`, `createDeliveryOrder`, `createProduct`, `updateProduct` and `addProductAlias`, which only **preview** and return a one-time `confirmToken`; `confirmAction` saves exactly what was previewed (30-minute expiry, a repeat returns the same result). Payments, invoice edits, voids, delivery pricing, product deletion and customer changes are not exposed (docs/OPERATING_POLICY.md rule 5).
 
 ## Testing access control
 
