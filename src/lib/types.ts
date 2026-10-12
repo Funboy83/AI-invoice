@@ -128,3 +128,31 @@ export function isOpenDelivery(invoice: Pick<Invoice, "delivery" | "paymentStatu
 export function isInvoiceIncomplete(invoice: Invoice): boolean {
   return invoice.paymentStatus === "draft" && invoice.items.some((it) => it.incomplete);
 }
+
+/**
+ * A "Custom Invoice": a printable copy of an existing invoice, laid out like the KiotViet-style business invoice
+ * (src/app/custom-invoices/[id]/page.tsx). It takes the NEXT number from the same counter as normal invoices, and
+ * its customer, items and totals are copied from the source invoice when it is created and never change afterwards.
+ * The only editable field is `date`. It lives in its own `customInvoices` collection, so it never counts toward
+ * customer debt, stock, payments or the AI's invoice search — the source invoice remains the real sale.
+ */
+export interface CustomInvoice {
+  id: string;
+  invoiceNumber: string;
+  /** Calendar date printed on the invoice, "YYYY-MM-DD" (a plain date, so it never shifts with time zones). */
+  date: string;
+  sourceInvoiceId: string;
+  sourceInvoiceNumber: string;
+  customerId?: string;
+  customerName: string;
+  billToAddress?: string;
+  shipToAddress?: string;
+  phone?: string;
+  items: InvoiceLineItem[];
+  shipping: number;
+  discount: number;
+  subtotal: number;
+  total: number;
+  createdAt: number;
+  updatedAt: number;
+}

@@ -7,8 +7,8 @@ import { updateInvoiceApi, recordPaymentApi, createProductApi, newOperationId } 
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Invoice, InvoiceLog, InvoiceLineItem, Product, InvoiceStatus, Payment } from "@/lib/types";
-import { isInvoiceIncomplete, isOpenDelivery } from "@/lib/types";
-import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign, AlertTriangle } from "lucide-react";
+import { isCommittedStatus, isInvoiceIncomplete, isOpenDelivery } from "@/lib/types";
+import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign, AlertTriangle, FileStack } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
 import DeliveryBadge from "@/components/DeliveryBadge";
 
@@ -203,13 +203,21 @@ export default function InvoiceDetailPage() {
         >
           <ArrowLeft size={15} /> Back
         </button>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             onClick={() => window.print()}
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             <Printer size={14} /> Print / PDF
           </button>
+          {!editing && isCommittedStatus(invoice.paymentStatus) && (
+            <button
+              onClick={() => router.push(`/custom-invoices?from=${invoice.id}`)}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <FileStack size={14} /> Custom Invoice
+            </button>
+          )}
           {!editing && (
             <button
               onClick={() => {

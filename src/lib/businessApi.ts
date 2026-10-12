@@ -14,10 +14,10 @@
  * for; this shape makes that mistake a compile error instead of a subtle bug.
  */
 import type { AuthedFetch } from "./chat/types";
-import type { Customer, Invoice, InvoiceLineItem, InvoiceStatus, Product } from "./types";
+import type { Customer, CustomInvoice, Invoice, InvoiceLineItem, InvoiceStatus, Product } from "./types";
 
-async function call<T>(authedFetch: AuthedFetch, method: "POST" | "PATCH", url: string, body: unknown): Promise<T> {
-  const res = await authedFetch(url, { method, body: JSON.stringify(body) });
+async function call<T>(authedFetch: AuthedFetch, method: "GET" | "POST" | "PATCH", url: string, body: unknown): Promise<T> {
+  const res = await authedFetch(url, method === "GET" ? { method } : { method, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? "Có lỗi xảy ra.");
   return data as T;
@@ -108,4 +108,41 @@ export async function updateInvoiceApi(authedFetch: AuthedFetch, id: string, inp
 
 export async function recordPaymentApi(authedFetch: AuthedFetch, invoiceId: string, amount: number, method: string | undefined, operationId: string): Promise<{ stockWarnings?: string[] }> {
   return call<{ stockWarnings?: string[] }>(authedFetch, "POST", `/api/business/invoices/${invoiceId}/payments`, { amount, method, operationId });
+}
+
+/* Custom invoices: read AND written through the server (see src/app/api/business/custom-invoices). */
+export async function listCustomInvoicesApi(authedFetch: AuthedFetch): Promise<CustomInvoice[]> {
+  const { customInvoices } = await call<{ customInvoices: CustomInvoice[] }>(authedFetch, "GET", "/api/business/custom-invoices", undefined);
+  return customInvoices;
+}
+
+export async function getCustomInvoiceApi(authedFetch: AuthedFetch, id: string): Promise<CustomInvoice> {
+  const { customInvoice } = await call<{ customInvoice: CustomInvoice }>(authedFetch, "GET", `/api/business/custom-invoices/${id}`, undefined);
+  return customInvoice;
+}
+
+export async function createCustomInvoiceApi(authedFetch: AuthedFetch, sourceInvoiceId: string, date: string, operationId: string): Promise<CustomInvoice> {
+  const { customInvoice } = await call<{ customInvoice: CustomInvoice }>(authedFetch, "POST", "/api/business/custom-invoices", { sourceInvoiceId, date, operationId });
+  return customInvoice;
+}
+
+export async function updateCustomInvoiceDateApi(authedFetch: AuthedFetch, id: string, date: string, operationId: string): Promise<CustomInvoice> {
+  const { customInvoice } = await call<{ customInvoice: CustomInvoice }>(authedFetch, "PATCH", `/api/business/custom-invoices/${id}`, { date, operationId });
+  return customInvoice;
+}
+
+export async function getCustomInvoiceSettingsApi(authedFetch: AuthedFetch): Promise<{ header: string; terms: string }> {
+  return call<{ header: string; terms: string }>(authedFetch, "GET", "/api/business/custom-invoice-settings", undefined);
+}
+
+/** Today's (or a timestamp's) LOCAL calendar date as "YYYY-MM-DD" — what a date input shows and a Custom Invoice stores. */
+export function toDateKey(ms: number = Date.now()): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** "2026-10-07" → "10/07/2026" (US order, as on the printed invoice). `sep` lets the print use " / ". */
+export function formatDateKey(key: string, sep = "/"): string {
+  const [y, m, d] = key.split("-");
+  return [m, d, y].join(sep);
 }

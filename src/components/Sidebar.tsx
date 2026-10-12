@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FileText, Boxes, Users } from "lucide-react";
+import { LayoutDashboard, FileText, FileStack, Boxes, Users } from "lucide-react";
 import clsx from "clsx";
 
 const links = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/invoices", label: "Invoices", icon: FileText },
+  { href: "/custom-invoices", label: "Custom Invoice", icon: FileStack },
   { href: "/products", label: "Products", icon: Boxes },
   { href: "/customers", label: "Customers", icon: Users },
 ];

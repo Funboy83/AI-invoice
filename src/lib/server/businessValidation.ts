@@ -147,3 +147,12 @@ export function optionalOperationId(v: unknown): string | undefined {
   if (typeof v !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(v)) throw new ValidationError("operationId không hợp lệ.");
   return v;
 }
+
+/** A real calendar date written as "YYYY-MM-DD" (rejects 2026-02-30 and anything outside 2000–2100). */
+export function requireDateKey(v: unknown, field: string): string {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new ValidationError(`${field} phải có dạng YYYY-MM-DD.`);
+  const [y, m, d] = v.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (y < 2000 || y > 2100 || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) throw new ValidationError(`${field} không phải ngày hợp lệ.`);
+  return v;
+}

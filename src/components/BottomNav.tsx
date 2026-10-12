@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Sparkles, FileText, Users, Boxes } from "lucide-react";
+import { Sparkles, FileText, FileStack, Users, Boxes } from "lucide-react";
 import clsx from "clsx";
 
 const tabs = [
   { href: "/", label: "AI", icon: Sparkles },
   { href: "/invoices", label: "Invoices", icon: FileText },
+  { href: "/custom-invoices", label: "Custom Invoice", icon: FileStack },
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/products", label: "Products", icon: Boxes },
 ];
@@ -25,7 +26,7 @@ export default function BottomNav() {
               key={href}
               href={href}
               className={clsx(
-                "flex-1 flex flex-col items-center justify-center gap-0.5 py-2.5 min-h-[3.25rem] text-[11px] font-medium",
+                "flex-1 min-w-0 flex flex-col items-center justify-center gap-0.5 py-2.5 min-h-[3.25rem] text-[11px] leading-tight text-center font-medium",
                 active ? "text-indigo-600" : "text-slate-500"
               )}
             >

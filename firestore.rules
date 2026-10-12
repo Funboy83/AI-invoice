@@ -62,5 +62,7 @@ service cloud.firestore {
     match /counters/{id}     { allow read, write: if false; }
     match /operations/{id}   { allow read, write: if false; }
     match /apiPendingActions/{id} { allow read, write: if false; }
+    // Custom invoices are read and written only through /api/business/custom-invoices (server, membership-checked).
+    match /customInvoices/{id} { allow read, write: if false; }
   }
 }
