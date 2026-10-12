@@ -98,6 +98,23 @@ describe("what an outside AI can do", () => {
   });
 });
 
+describe("ChatGPT's search and fetch", () => {
+  it("search finds customers, products and invoices; an empty query lists customers", async () => {
+    const found = (await run("search", { query: "milo" })) as unknown as { results: { id: string; title: string; url: string }[] };
+    expect(found.results).toContainEqual(expect.objectContaining({ id: "product:p1", title: "Product: Milo" }));
+    const all = (await run("search", { query: "" })) as unknown as { results: { id: string }[] };
+    expect(all.results.map((r) => r.id)).toEqual(["customer:c1"]);
+  });
+
+  it("fetch returns one record with the app's own debt numbers, and refuses unknown ids", async () => {
+    const doc = (await run("fetch", { id: "customer:c1" })) as unknown as { id: string; title: string; text: string; url: string };
+    expect(doc).toMatchObject({ id: "customer:c1", title: "Customer: Hoa Lee" });
+    expect(JSON.parse(doc.text).debt).toBeDefined();
+    expect(((await run("fetch", { id: "payments:x" })) as R).status).toBe("error");
+    expect(((await run("fetch", { id: "customer:nope" })) as R).status).toBe("not_found");
+  });
+});
+
 describe("create → preview → confirmAction", () => {
   it("a delivery order is only previewed until confirmed, then saved exactly once", async () => {
     const preview = await run("createDeliveryOrder", { customerName: "hoa lee", items: [{ productName: "milo", quantity: 5 }] });
