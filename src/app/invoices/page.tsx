@@ -88,13 +88,13 @@ function InvoicesPageContent() {
     return subtotal + (Number(shipping) || 0) - (Number(discount) || 0);
   }, [lines, shipping, discount]);
 
-  function openModal() {
+  function openModal(delivery = false) {
     setCustomerId("");
     setCustomerName("");
     setShipping("0");
     setDiscount("0");
     setNotes("");
-    setIsDelivery(false);
+    setIsDelivery(delivery);
     setLines([]);
     setError("");
     createAction.start();
@@ -181,12 +181,21 @@ function InvoicesPageContent() {
           <h1 className="text-2xl font-semibold text-slate-900">Invoices</h1>
           <p className="text-sm text-slate-500 mt-1 hidden md:block">Create manually, or ask the AI secretary to draft one for you.</p>
         </div>
-        <button
-          onClick={openModal}
-          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-        >
-          <Plus size={16} /> New
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Always-visible way in: opens the same form with "Delivery order" already ticked. */}
+          <button
+            onClick={() => openModal(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100"
+          >
+            <Truck size={16} /> Đơn giao
+          </button>
+          <button
+            onClick={() => openModal()}
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            <Plus size={16} /> New
+          </button>
+        </div>
       </div>
 
       {/* Open deliveries were only reachable from a chat shortcut; this gives the list its own way in. */}
@@ -302,7 +311,7 @@ function InvoicesPageContent() {
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30">
           <div className="w-full md:max-w-2xl rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">New invoice</h2>
+              <h2 className="text-lg font-semibold text-slate-900">{isDelivery ? "New delivery order (đơn giao)" : "New invoice"}</h2>
               <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-700">
                 <X size={18} />
               </button>
