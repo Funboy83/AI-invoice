@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { HttpError } from "./auth";
 import { ConfigError } from "./firebaseAdmin";
-import { EXTERNAL_INSTRUCTIONS, apiConfig, authenticateApiKey, externalTools, keyFromRequest, runExternalTool } from "./externalApi";
+import { EXTERNAL_INSTRUCTIONS, apiConfig, apiConfigProblem, authenticateApiKey, externalTools, keyFromRequest, runExternalTool } from "./externalApi";
 
 /**
  * A small MCP server (Model Context Protocol, "Streamable HTTP" transport, stateless JSON responses) so Claude,
@@ -28,7 +28,10 @@ const rpcError = (id: JsonRpcId, code: number, message: string) => ({ jsonrpc: "
 
 export async function handleMcpPost(req: Request, pathKey?: string): Promise<Response> {
   const cfg = apiConfig();
-  if (!cfg) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!cfg) {
+    const problem = apiConfigProblem();
+    return problem ? NextResponse.json(rpcError(null, -32603, problem), { status: 503 }) : NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
 
   let user;
   try {

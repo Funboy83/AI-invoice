@@ -34,10 +34,24 @@ export function apiConfig(env: Record<string, string | undefined> = process.env)
   return keys.length > 0 ? { keys } : null;
 }
 
+/**
+ * Why the door is still closed although AI_API_ENABLED=true (a mistyped AI_API_KEYS), or null. Routes answer 503 with
+ * this message instead of a bare 404, so a setup mistake is visible from the outside without revealing any key.
+ */
+export function apiConfigProblem(env: Record<string, string | undefined> = process.env): string | null {
+  if (env.AI_API_ENABLED?.trim().toLowerCase() !== "true") return null;
+  if (!env.AI_API_KEYS?.trim()) return "AI_API_ENABLED is true but AI_API_KEYS is empty. Set it to loginEmail:key in Vercel and redeploy.";
+  if (parseApiKeys(env.AI_API_KEYS).length === 0) {
+    return "AI_API_KEYS has no valid entry. Use loginEmail:key (key: 32+ letters, digits, - or _; no spaces, no 'Bearer'), then redeploy.";
+  }
+  return null;
+}
+
 /** "a@b.com:KEY, c@d.com:KEY2" → entries. Malformed or short entries are ignored (never widen access by accident). */
 export function parseApiKeys(raw: string): { email: string; key: string }[] {
   const out: { email: string; key: string }[] = [];
-  for (const entry of raw.split(/[,;\n]/)) {
+  // Surrounding quotes are a common copy-paste leftover in the Vercel dashboard; they are never part of a key.
+  for (const entry of raw.trim().replace(/^(["'])([^]*)\1$/, "$2").split(/[,;\n]/)) {
     const m = /^\s*([^\s:]+@[^\s:]+)\s*:\s*([A-Za-z0-9_-]+)\s*$/.exec(entry);
     if (m && m[2].length >= MIN_KEY_LENGTH) out.push({ email: m[1].toLowerCase(), key: m[2] });
   }

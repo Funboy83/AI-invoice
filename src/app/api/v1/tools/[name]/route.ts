@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { errorResponse } from "@/lib/server/http";
-import { apiConfig, authenticateApiKey, externalTools, keyFromRequest, runExternalTool } from "@/lib/server/externalApi";
+import { apiConfig, apiConfigProblem, authenticateApiKey, externalTools, keyFromRequest, runExternalTool } from "@/lib/server/externalApi";
 
 export const runtime = "nodejs";
 
 /** REST API: call one tool. Body = the tool's arguments as JSON. Answer = the tool's result (same as over MCP). */
 export async function POST(req: Request, { params }: { params: Promise<{ name: string }> }) {
   const cfg = apiConfig();
-  if (!cfg) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!cfg) {
+    const problem = apiConfigProblem();
+    return problem ? NextResponse.json({ error: problem }, { status: 503 }) : NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   try {
     const user = await authenticateApiKey(cfg, keyFromRequest(req));
     const { name } = await params;
