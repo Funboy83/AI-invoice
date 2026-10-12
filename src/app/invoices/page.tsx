@@ -9,7 +9,7 @@ import ChatFilterBanner from "@/components/ChatFilterBanner";
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import { isInvoiceIncomplete, isOpenDelivery, type Invoice, type Product, type Customer, type InvoiceLineItem } from "@/lib/types";
-import { Plus, X, Trash2, AlertTriangle } from "lucide-react";
+import { Plus, X, Trash2, AlertTriangle, Truck } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
 import DeliveryBadge from "@/components/DeliveryBadge";
 
@@ -53,6 +53,9 @@ function InvoicesPageContent() {
       (!unpaidOnly || i.paymentStatus === "unpaid" || i.paymentStatus === "partial") &&
       (!deliveryOnly || isOpenDelivery(i))
   );
+  const openDeliveries = allInvoices.filter(
+    (i) => isOpenDelivery(i) && (!customerFilter || i.customerId === customerFilter)
+  ).length;
 
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -185,6 +188,19 @@ function InvoicesPageContent() {
           <Plus size={16} /> New
         </button>
       </div>
+
+      {/* Open deliveries were only reachable from a chat shortcut; this gives the list its own way in. */}
+      {!deliveryOnly && openDeliveries > 0 && (
+        <Link
+          href="/invoices?tag=delivery"
+          className="flex items-center justify-between rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-800 active:bg-violet-100"
+        >
+          <span className="flex items-center gap-2 font-medium">
+            <Truck size={16} /> {openDeliveries} đơn giao chưa chốt giá
+          </span>
+          <span className="text-violet-600">Xem</span>
+        </Link>
+      )}
 
       {(customerFilter || unpaidOnly || deliveryOnly) && (
         <ChatFilterBanner
