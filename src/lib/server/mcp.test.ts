@@ -38,6 +38,15 @@ describe("MCP server", () => {
     expect((await mcpPost(rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }))).status).toBe(404);
   });
 
+  it("says what is wrong (503) when switched on but AI_API_KEYS is mistyped, without revealing anything", async () => {
+    vi.stubEnv("AI_API_KEYS", KEY); // key without the email
+    const res = await mcpPost(rpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }));
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error.message).toMatch(/AI_API_KEYS/);
+    expect(JSON.stringify(body)).not.toContain(KEY);
+  });
+
   it("rejects a request without the right key (401)", async () => {
     const res = await mcpPost(rpc({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { authorization: "Bearer wrong" }));
     expect(res.status).toBe(401);

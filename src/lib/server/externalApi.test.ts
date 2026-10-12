@@ -7,7 +7,7 @@ vi.mock("@/lib/firebase", () => ({ db: {}, firebaseApp: {} }));
 import { store, adminFacade } from "@/test/fakeFirestore";
 import { __setAdminDbForTests } from "@/lib/server/firebaseAdmin";
 import { HttpError, type AuthedUser } from "./auth";
-import { apiConfig, authenticateApiKey, externalTools, parseApiKeys, runExternalTool } from "./externalApi";
+import { apiConfig, apiConfigProblem, authenticateApiKey, externalTools, parseApiKeys, runExternalTool } from "./externalApi";
 import type { Invoice } from "@/lib/types";
 
 const KEY = "k".repeat(40);
@@ -36,6 +36,18 @@ describe("turning the door on", () => {
     expect(apiConfig({ AI_API_KEYS: ENV.AI_API_KEYS })).toBeNull();
     expect(apiConfig({ AI_API_ENABLED: "true" })).toBeNull();
     expect(apiConfig(ENV)?.keys).toHaveLength(2);
+  });
+
+  it("accepts a value pasted with surrounding quotes", () => {
+    expect(parseApiKeys(`"wife@example.com:${KEY}"`)).toEqual([{ email: "wife@example.com", key: KEY }]);
+  });
+
+  it("explains a switched-on door whose keys are missing or mistyped, and stays quiet when it is off or fine", () => {
+    expect(apiConfigProblem({})).toBeNull();
+    expect(apiConfigProblem(ENV)).toBeNull();
+    expect(apiConfigProblem({ AI_API_ENABLED: "true" })).toMatch(/AI_API_KEYS is empty/);
+    expect(apiConfigProblem({ AI_API_ENABLED: "true", AI_API_KEYS: KEY })).toMatch(/no valid entry/);
+    expect(apiConfigProblem({ AI_API_ENABLED: "true", AI_API_KEYS: `wife@example.com:Bearer ${KEY}` })).toMatch(/no valid entry/);
   });
 
   it("ignores short or malformed keys, so a weak key never opens it", () => {
