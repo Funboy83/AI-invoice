@@ -3,6 +3,8 @@ import { getAdminDb } from "./firebaseAdmin";
 import { HttpError, currentStoreId, type AuthedUser } from "./auth";
 import { memberByEmail } from "./membership";
 import { executeTool, toolDefinitions } from "@/lib/ai/tools";
+import { getAllCustomers } from "./businessStore";
+import { workerBaseUrl } from "./dispatch";
 
 /**
  * The door for OUTSIDE AI apps (Claude, ChatGPT, or a script) — used by the REST API (/api/v1/tools) and the MCP
@@ -108,6 +110,9 @@ const PRODUCT_TOOLS = ["createProduct", "updateProduct", "addProductAlias"] as c
 const CONFIRM_TOOLS: readonly string[] = [...ORDER_TOOLS, ...PRODUCT_TOOLS];
 
 export const CONFIRM_ACTION = "confirmAction";
+/** ChatGPT's connectors (outside Developer mode, and deep research) only use tools with exactly these two names. */
+const SEARCH = "search";
+const FETCH = "fetch";
 const PENDING_COLLECTION = "apiPendingActions";
 const PENDING_TTL_MS = 30 * 60 * 1000;
 
@@ -148,6 +153,21 @@ function buildCatalog(): ExternalTool[] {
     const t = byName.get(name)!;
     out.push({ name, description: t.description + PRODUCT_CONFIRM_NOTE, inputSchema: t.input_schema as Record<string, unknown>, readOnly: false });
   }
+  out.push(
+    {
+      name: SEARCH,
+      description:
+        "Search the store for customers, products and invoices by name, nickname or invoice number (Vietnamese with or without accents). An empty query lists all customers. Returns results with an id; pass that id to fetch for the details.",
+      inputSchema: { type: "object", properties: { query: { type: "string", description: "What to look for." } }, required: ["query"] },
+      readOnly: true,
+    },
+    {
+      name: FETCH,
+      description: "Get the full details of one search result by its id: a customer with their current debt, a product, or an invoice.",
+      inputSchema: { type: "object", properties: { id: { type: "string", description: "An id returned by search." } }, required: ["id"] },
+      readOnly: true,
+    }
+  );
   out.push({
     name: CONFIRM_ACTION,
     description:
@@ -178,6 +198,8 @@ export const EXTERNAL_INSTRUCTIONS = [
 export async function runExternalTool(name: string, args: Record<string, unknown>, user: AuthedUser): Promise<unknown> {
   if (!externalToolNames.has(name)) return { status: "error", message: `Unknown tool "${name}".` };
   if (name === CONFIRM_ACTION) return confirmAction(String(args.confirmToken ?? ""), user);
+  if (name === SEARCH) return searchAll(String(args.query ?? ""));
+  if (name === FETCH) return fetchOne(String(args.id ?? ""));
   if (CONFIRM_TOOLS.includes(name)) {
     const result = (await executeTool(name, args, { channel: "api", previewOnly: true })) as Record<string, unknown>;
     if (result.status !== "preview") return result; // needs_confirmation / needs_new_customer / needs_more_info / error…
@@ -199,6 +221,69 @@ export async function runExternalTool(name: string, args: Record<string, unknown
     };
   }
   return executeTool(name, args, { channel: "api" });
+}
+
+/* ------------------------- search / fetch (ChatGPT's shape) ------------------------- */
+
+type SearchHit = { id: string; title: string; url: string };
+type Row = Record<string, unknown> & { id: string };
+
+/** A link back to the app, so ChatGPT can cite it. Relative when this deployment doesn't know its own address. */
+const appLink = (path: string) => `${workerBaseUrl() ?? ""}${path}`;
+
+/** Results come straight from the shared search tools; ids are prefixed with the kind so fetch knows where to look. */
+async function searchAll(query: string): Promise<{ results: SearchHit[] }> {
+  const q = query.trim();
+  if (!q || q === "*") {
+    const customers = (await getAllCustomers()).filter((c) => c.active !== false);
+    return { results: customers.map((c) => ({ id: `customer:${c.id}`, title: `Customer: ${c.name}`, url: appLink("/customers") })) };
+  }
+  const run = async (tool: string, args: Record<string, unknown>) =>
+    (((await executeTool(tool, args, { channel: "api" })) as { results?: Row[] }).results ?? []);
+  const [customers, products, invoices] = await Promise.all([
+    run("searchCustomer", { query: q }),
+    run("searchProduct", { query: q }),
+    run("searchInvoices", { text: q, limit: 10 }),
+  ]);
+  return {
+    results: [
+      ...customers.map((c) => ({ id: `customer:${c.id}`, title: `Customer: ${c.name}`, url: appLink("/customers") })),
+      ...products.map((p) => ({ id: `product:${p.id}`, title: `Product: ${p.name}`, url: appLink("/products") })),
+      ...invoices.map((i) => ({ id: `invoice:${i.id}`, title: `Invoice #${i.invoiceNumber} – ${i.customerName}`, url: appLink(`/invoices/${i.id}`) })),
+    ],
+  };
+}
+
+async function fetchOne(id: string): Promise<unknown> {
+  const [kind, ...rest] = id.split(":");
+  const key = rest.join(":");
+  if (!key) return { status: "error", message: "Unknown id. Use an id returned by search." };
+  const read = (tool: string, args: Record<string, unknown>) => executeTool(tool, args, { channel: "api" }) as Promise<Record<string, unknown>>;
+  let title: string;
+  let url: string;
+  let data: Record<string, unknown>;
+  if (kind === "customer") {
+    const found = await read("getCustomer", { customerId: key });
+    if (!found.customer) return { status: "not_found" };
+    // Debt numbers come from the app, like everywhere else.
+    data = { ...found, debt: await read("getCustomerDebt", { customerId: key }) };
+    title = `Customer: ${(found.customer as { name: string }).name}`;
+    url = appLink("/customers");
+  } else if (kind === "product") {
+    data = await read("getProduct", { productId: key });
+    if (!data.product) return { status: "not_found" };
+    title = `Product: ${(data.product as { name: string }).name}`;
+    url = appLink("/products");
+  } else if (kind === "invoice") {
+    data = await read("getInvoice", { invoiceId: key });
+    if (!data.invoice) return { status: "not_found" };
+    const inv = data.invoice as { invoiceNumber: string; customerName: string };
+    title = `Invoice #${inv.invoiceNumber} – ${inv.customerName}`;
+    url = appLink(`/invoices/${key}`);
+  } else {
+    return { status: "error", message: "Unknown id. Use an id returned by search." };
+  }
+  return { id, title, text: JSON.stringify(data), url, metadata: { kind } };
 }
 
 /** Tokens are stored by hash, so reading the database never reveals a usable token. */
