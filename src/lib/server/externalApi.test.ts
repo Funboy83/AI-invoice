@@ -76,10 +76,12 @@ describe("who may call", () => {
 });
 
 describe("what an outside AI can do", () => {
-  it("offers read tools plus the two create tools and confirmAction — never payments or edits", () => {
+  it("offers read tools, the create tools, product create/edit and confirmAction — never payments or invoice edits", () => {
     const names = externalTools.map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["searchCustomer", "getCustomerDebt", "getDeliveries", "createInvoiceDraft", "createDeliveryOrder", "confirmAction"]));
-    for (const banned of ["recordPayment", "updateInvoice", "convertDelivery", "createCustomer", "updateProduct", "addInvoiceItem", "requestUserInput"]) {
+    expect(names).toEqual(
+      expect.arrayContaining(["searchCustomer", "getCustomerDebt", "getDeliveries", "createInvoiceDraft", "createDeliveryOrder", "createProduct", "updateProduct", "addProductAlias", "confirmAction"])
+    );
+    for (const banned of ["recordPayment", "updateInvoice", "convertDelivery", "createCustomer", "updateCustomer", "addInvoiceItem", "requestUserInput"]) {
       expect(names).not.toContain(banned);
     }
     const delivery = externalTools.find((t) => t.name === "createDeliveryOrder")!;
@@ -166,5 +168,73 @@ describe("create → preview → confirmAction", () => {
     const ids = [...store.docs.keys()].filter((k) => k.startsWith("apiPendingActions/"));
     expect(ids).toHaveLength(1);
     expect(ids[0]).not.toContain(preview.confirmToken!);
+  });
+});
+
+describe("products: preview → confirmAction", () => {
+  const product = (id: string) => store.docs.get(`products/${id}`) as Record<string, unknown> | undefined;
+  const productIds = () => [...store.docs.keys()].filter((k) => k.startsWith("products/"));
+
+  it("creates a new product only after confirm, exactly once", async () => {
+    const preview = await run("createProduct", { name: "Nước mắm Phú Quốc", defaultUnit: "chai", defaultPrice: 4.5, aliases: ["mam pq"] });
+    expect(preview.status).toBe("needs_confirmation");
+    expect(preview.preview).toMatchObject({ product: { name: "Nước mắm Phú Quốc", defaultUnit: "chai", defaultPrice: 4.5, aliases: ["mam pq"], stockTracked: false } });
+    expect(productIds()).toHaveLength(2);
+
+    const saved = (await run("confirmAction", { confirmToken: preview.confirmToken })) as R & { product: { id: string; name: string } };
+    expect(saved.status).toBe("created");
+    expect(product(saved.product.id)).toMatchObject({ name: "Nước mắm Phú Quốc", defaultUnit: "chai", defaultPrice: 4.5, aliases: ["mam pq"], quantity: null });
+    await run("confirmAction", { confirmToken: preview.confirmToken });
+    expect(productIds()).toHaveLength(3);
+  });
+
+  it("asks before making a product that looks like an existing one; force=true previews it with a warning", async () => {
+    const ask = await run("createProduct", { name: "milo", defaultPrice: 30 });
+    expect(ask.status).toBe("needs_confirmation");
+    expect(ask.confirmToken).toBeUndefined();
+    expect((ask as unknown as { candidates: { id: string }[] }).candidates[0].id).toBe("p1");
+
+    const preview = await run("createProduct", { name: "Milo", defaultUnit: "lốc", defaultPrice: 6, force: true });
+    expect(preview.preview).toMatchObject({ similarProducts: [{ id: "p1" }] });
+    expect((await run("confirmAction", { confirmToken: preview.confirmToken })).status).toBe("created");
+    expect(productIds()).toHaveLength(3);
+  });
+
+  it("rejects a bad price in the preview, before any token is made", async () => {
+    expect((await run("createProduct", { name: "Gạo", defaultPrice: -1 })).status).toBe("error");
+    expect((await run("updateProduct", { productId: "p1", defaultPrice: -5 })).status).toBe("error");
+    expect(store.count("apiPendingActions")).toBe(0);
+  });
+
+  it("edits a product: shows old → new, saves only the shown change, past invoices keep their price", async () => {
+    store.put("invoices/i1", { invoiceNumber: "INV-1", customerId: "c1", items: [{ productId: "p1", productName: "Milo", quantity: 2, unit: "thùng", price: 29, lineTotal: 58 }], total: 58 });
+    const preview = await run("updateProduct", { productId: "p1", defaultPrice: 31, defaultUnit: "thùng", notes: "giá mới" });
+    expect(preview.status).toBe("needs_confirmation");
+    expect(preview.preview).toMatchObject({
+      changes: [
+        { field: "defaultPrice", from: 29, to: 31 },
+        { field: "notes", from: null, to: "giá mới" },
+      ],
+    });
+    expect((preview.preview as { note?: string }).note).toMatch(/past|already made/i);
+    expect(product("p1")).toMatchObject({ defaultPrice: 29 });
+
+    expect((await run("confirmAction", { confirmToken: preview.confirmToken })).status).toBe("updated");
+    expect(product("p1")).toMatchObject({ defaultPrice: 31, notes: "giá mới", quantity: 100 });
+    expect((store.docs.get("invoices/i1") as { items: { price: number }[] }).items[0].price).toBe(29);
+  });
+
+  it("says when there is nothing to change or the product doesn't exist", async () => {
+    expect((await run("updateProduct", { productId: "p1", defaultPrice: 29 })).status).toBe("unchanged");
+    expect((await run("updateProduct", { productId: "nope", defaultPrice: 1 })).status).toBe("not_found");
+    expect(store.count("apiPendingActions")).toBe(0);
+  });
+
+  it("adds a nickname after confirm, and skips one it already has", async () => {
+    const preview = await run("addProductAlias", { productId: "p1", alias: " milo thung " });
+    expect(preview.preview).toMatchObject({ product: { id: "p1" }, alias: "milo thung" });
+    expect((await run("confirmAction", { confirmToken: preview.confirmToken })).status).toBe("alias_added");
+    expect(product("p1")).toMatchObject({ aliases: ["milo thung"] });
+    expect((await run("addProductAlias", { productId: "p1", alias: "MILO THUNG" })).status).toBe("unchanged");
   });
 });
