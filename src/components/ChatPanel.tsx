@@ -33,7 +33,7 @@ export default function ChatPanel() {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="hidden md:flex fixed bottom-6 right-6 z-40 items-center gap-2 rounded-full bg-indigo-600 px-5 py-3 text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700 transition-colors"
+          className="hidden md:flex print:hidden fixed bottom-6 right-6 z-40 items-center gap-2 rounded-full bg-indigo-600 px-5 py-3 text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700 transition-colors"
         >
           {busy ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
           <span className="text-sm font-medium">{busy ? "Đang xử lý…" : "Ask AI"}</span>
@@ -42,7 +42,7 @@ export default function ChatPanel() {
 
       <div
         className={clsx(
-          "hidden md:flex fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white border-l border-slate-200 shadow-2xl flex-col transition-transform duration-200",
+          "hidden md:flex print:hidden fixed inset-y-0 right-0 z-50 w-full max-w-md bg-white border-l border-slate-200 shadow-2xl flex-col transition-transform duration-200",
           open ? "translate-x-0" : "translate-x-full"
         )}
       >

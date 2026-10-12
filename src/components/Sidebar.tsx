@@ -16,7 +16,7 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden md:flex w-56 shrink-0 border-r border-slate-200 bg-white flex-col">
+    <aside className="hidden md:flex print:hidden w-56 shrink-0 border-r border-slate-200 bg-white flex-col">
       <div className="px-5 py-5 border-b border-slate-200">
         <p className="text-lg font-semibold text-slate-900">Invoice AI</p>
         <p className="text-xs text-slate-500">Virtual secretary</p>

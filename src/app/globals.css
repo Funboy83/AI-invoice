@@ -17,3 +17,34 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }
+
+/*
+ * Printing. The app shell is a full-height flex body with <main> as its own scroll box (layout.tsx). Safari lays a
+ * printout out from that viewport-height scroll box and the fixed nav/chat layers, which makes its print preview very
+ * slow or never appear. For print, unwind the shell into plain document flow so only the invoice gets laid out.
+ */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+  html,
+  body {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  body {
+    display: block !important;
+  }
+  main {
+    overflow: visible !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    box-shadow: none !important;
+  }
+}

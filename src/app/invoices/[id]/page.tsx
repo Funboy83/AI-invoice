@@ -79,13 +79,15 @@ export default function InvoiceDetailPage() {
     load();
     const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
     const u1 = watchInvoiceLogs(id, setLogs, onErr);
-    const u2 = watchProducts(setProducts, onErr);
-    return () => {
-      u1();
-      u2();
-    };
+    return () => u1();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, notifyPossibleRevocation]);
+
+  // The full product catalog is only needed for the product picker while editing — don't stream it just to view/print.
+  useEffect(() => {
+    if (!editing) return;
+    return watchProducts(setProducts, (err) => isPermissionDenied(err) && notifyPossibleRevocation());
+  }, [editing, notifyPossibleRevocation]);
 
   function startEdit() {
     if (!invoice) return;
@@ -540,8 +542,9 @@ export default function InvoiceDetailPage() {
           <thead>
             <tr>
               <th className="border border-black py-1 px-1 w-10">NO</th>
-              <th className="border border-black py-1 px-1 w-14">QTY</th>
               <th className="border border-black py-1 px-2 text-left">DESCRIPTION</th>
+              <th className="border border-black py-1 px-1 w-14">QTY</th>
+              <th className="border border-black py-1 px-1 w-16">UNIT</th>
               <th className="border border-black py-1 px-2 w-24">UNIT PRICE</th>
               <th className="border border-black py-1 px-2 w-24">AMOUNT</th>
             </tr>
@@ -550,8 +553,9 @@ export default function InvoiceDetailPage() {
             {invoice.items.map((li, idx) => (
               <tr key={idx}>
                 <td className="border border-black text-center py-1">{idx + 1}</td>
-                <td className="border border-black text-center py-1">{li.quantity}</td>
                 <td className="border border-black px-2 py-1">{li.productName}</td>
+                <td className="border border-black text-center py-1">{li.quantity}</td>
+                <td className="border border-black text-center px-1 py-1">{li.unit?.trim() || ""}</td>
                 <td className="border border-black text-right px-2 py-1">${li.price.toFixed(2)}</td>
                 <td className="border border-black text-right px-2 py-1">${li.lineTotal.toFixed(2)}</td>
               </tr>

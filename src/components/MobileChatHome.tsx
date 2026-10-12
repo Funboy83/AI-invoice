@@ -17,7 +17,7 @@ export default function MobileChatHome() {
 
   return (
     // bottom offset must match BottomNav's height (3.25rem) so the input bar isn't covered by it
-    <div className="md:hidden fixed inset-x-0 top-0 bottom-[calc(3.25rem+env(safe-area-inset-bottom))] z-30 flex flex-col bg-white pt-[env(safe-area-inset-top)]">
+    <div className="md:hidden print:hidden fixed inset-x-0 top-0 bottom-[calc(3.25rem+env(safe-area-inset-bottom))] z-30 flex flex-col bg-white pt-[env(safe-area-inset-top)]">
       <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-slate-200">
         <div className="flex items-center gap-2">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-indigo-600 text-white">
