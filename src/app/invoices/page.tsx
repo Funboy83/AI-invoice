@@ -9,7 +9,7 @@ import ChatFilterBanner from "@/components/ChatFilterBanner";
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import { isInvoiceIncomplete, isOpenDelivery, type Invoice, type Product, type Customer, type InvoiceLineItem } from "@/lib/types";
-import { Plus, X, Trash2, AlertTriangle } from "lucide-react";
+import { Plus, X, Trash2, AlertTriangle, Truck } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
 import DeliveryBadge from "@/components/DeliveryBadge";
 
@@ -53,6 +53,9 @@ function InvoicesPageContent() {
       (!unpaidOnly || i.paymentStatus === "unpaid" || i.paymentStatus === "partial") &&
       (!deliveryOnly || isOpenDelivery(i))
   );
+  const openDeliveries = allInvoices.filter(
+    (i) => isOpenDelivery(i) && (!customerFilter || i.customerId === customerFilter)
+  ).length;
 
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -85,13 +88,13 @@ function InvoicesPageContent() {
     return subtotal + (Number(shipping) || 0) - (Number(discount) || 0);
   }, [lines, shipping, discount]);
 
-  function openModal() {
+  function openModal(delivery = false) {
     setCustomerId("");
     setCustomerName("");
     setShipping("0");
     setDiscount("0");
     setNotes("");
-    setIsDelivery(false);
+    setIsDelivery(delivery);
     setLines([]);
     setError("");
     createAction.start();
@@ -178,13 +181,35 @@ function InvoicesPageContent() {
           <h1 className="text-2xl font-semibold text-slate-900">Invoices</h1>
           <p className="text-sm text-slate-500 mt-1 hidden md:block">Create manually, or ask the AI secretary to draft one for you.</p>
         </div>
-        <button
-          onClick={openModal}
-          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-        >
-          <Plus size={16} /> New
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Always-visible way in: opens the same form with "Delivery order" already ticked. */}
+          <button
+            onClick={() => openModal(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100"
+          >
+            <Truck size={16} /> Đơn giao
+          </button>
+          <button
+            onClick={() => openModal()}
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            <Plus size={16} /> New
+          </button>
+        </div>
       </div>
+
+      {/* Open deliveries were only reachable from a chat shortcut; this gives the list its own way in. */}
+      {!deliveryOnly && openDeliveries > 0 && (
+        <Link
+          href="/invoices?tag=delivery"
+          className="flex items-center justify-between rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-800 active:bg-violet-100"
+        >
+          <span className="flex items-center gap-2 font-medium">
+            <Truck size={16} /> {openDeliveries} đơn giao chưa chốt giá
+          </span>
+          <span className="text-violet-600">Xem</span>
+        </Link>
+      )}
 
       {(customerFilter || unpaidOnly || deliveryOnly) && (
         <ChatFilterBanner
@@ -286,7 +311,7 @@ function InvoicesPageContent() {
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30">
           <div className="w-full md:max-w-2xl rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">New invoice</h2>
+              <h2 className="text-lg font-semibold text-slate-900">{isDelivery ? "New delivery order (đơn giao)" : "New invoice"}</h2>
               <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-700">
                 <X size={18} />
               </button>
