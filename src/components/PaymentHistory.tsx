@@ -48,7 +48,8 @@ export default function PaymentHistory({ payments, invoices, customer }: { payme
                   {!p.cancelled && (p.history?.length ?? 0) > 0 && <Tag cls="bg-indigo-100 text-indigo-700">Edited</Tag>}
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  {new Date(p.createdAt).toLocaleString()}
+                  {new Date(p.paidAt ?? p.createdAt).toLocaleDateString()}
+                  {p.paidAt && new Date(p.paidAt).toDateString() !== new Date(p.createdAt).toDateString() ? ` (entered ${new Date(p.createdAt).toLocaleDateString()})` : ""}
                   {p.method ? ` · ${p.method}` : ""}
                   {p.by ? ` · ${p.by}` : ""}
                 </p>

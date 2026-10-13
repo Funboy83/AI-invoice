@@ -679,6 +679,8 @@ export async function recordCustomerPayment(input: {
   /** "adjustment": lowers the debt by hand (not money received) — needs a reason, and can never exceed what is owed. */
   kind?: "payment" | "adjustment";
   reason?: string;
+  /** When the money was received (back-dating allowed); defaults to now. */
+  paidAt?: number;
   actor: LogActor;
   by?: string;
   operationId?: string;
@@ -692,7 +694,7 @@ export async function recordCustomerPayment(input: {
   const invoiceRefs = (await invoicesCol().where("customerId", "==", input.customerId).get()).docs.map((d) => d.ref);
   const receiptId = paymentsCol().doc().id;
 
-  const fingerprint = { customerId: input.customerId, amount: input.amount, method: input.method, note: input.note, kind: input.kind, reason: input.reason };
+  const fingerprint = { customerId: input.customerId, amount: input.amount, method: input.method, note: input.note, kind: input.kind, reason: input.reason, paidAt: input.paidAt };
   return runOnce(input.operationId, "recordCustomerPayment", fingerprint, async (tx) => {
     const customerSnap = await tx.get(customerRef);
     if (!customerSnap.exists) throw new NotFoundError("Customer not found");
@@ -718,6 +720,7 @@ export async function recordCustomerPayment(input: {
       createdAt: now,
       actor: input.actor,
       receiptId,
+      paidAt: input.paidAt ?? now,
       ...(input.by ? { by: input.by } : {}),
       ...(isAdjustment ? { kind: "adjustment" as const, reason: input.reason!.trim() } : {}),
     };

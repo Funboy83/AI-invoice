@@ -111,6 +111,8 @@ export interface Payment {
   reason?: string;
   /** Email of whoever entered it, when known. */
   by?: string;
+  /** When the money was actually received (may be back-dated); absent = same as createdAt. */
+  paidAt?: number;
   /** Cancelled payments are kept (never deleted) and no longer count: their amount was taken back off the invoice. */
   cancelled?: boolean;
   /** Every edit/cancel of this payment, oldest first — the visible audit trail. */

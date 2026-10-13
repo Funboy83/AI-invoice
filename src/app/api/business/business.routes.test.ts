@@ -303,6 +303,17 @@ describe("POST /api/business/customers/[id]/payments", () => {
     expect(store.count("payments")).toBe(2);
   });
 
+  it("keeps a back-dated payment date and refuses a future one", async () => {
+    store.put("customers/c1", { name: "Hoa Lee", aliases: [], active: true });
+    const { POST } = await import("./customers/[id]/payments/route");
+    const params = { params: Promise.resolve({ id: "c1" }) };
+    const lastWeek = Date.now() - 7 * 86400_000;
+    expect((await POST(post("/api/business/customers/c1/payments", { amount: 5, paidAt: Date.now() + 5 * 86400_000 }), params)).status).toBe(400);
+    expect(store.count("payments")).toBe(0);
+    expect((await POST(post("/api/business/customers/c1/payments", { amount: 5, paidAt: lastWeek, method: "Check" }), params)).status).toBe(201);
+    expect(store.list("payments")[0][1]).toMatchObject({ paidAt: lastWeek, method: "Check", amount: 5, unallocated: true });
+  });
+
   it("404 for an unknown customer", async () => {
     const { POST } = await import("./customers/[id]/payments/route");
     const res = await POST(post("/api/business/customers/nope/payments", { amount: 10 }), { params: Promise.resolve({ id: "nope" }) });

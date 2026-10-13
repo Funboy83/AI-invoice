@@ -120,7 +120,7 @@ export interface CustomerPaymentResponse {
 export async function recordCustomerPaymentApi(
   authedFetch: AuthedFetch,
   customerId: string,
-  input: { amount: number; method?: string; note?: string; kind?: "payment" | "adjustment"; reason?: string },
+  input: { amount: number; method?: string; note?: string; kind?: "payment" | "adjustment"; reason?: string; paidAt?: number },
   operationId: string
 ): Promise<CustomerPaymentResponse> {
   return call<CustomerPaymentResponse>(authedFetch, "POST", `/api/business/customers/${customerId}/payments`, { ...input, operationId });

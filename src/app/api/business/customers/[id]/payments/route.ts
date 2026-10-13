@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticate } from "@/lib/server/auth";
 import { errorResponse } from "@/lib/server/http";
 import { recordCustomerPayment } from "@/lib/server/businessStore";
-import { requirePositive, optionalString, optionalOperationId } from "@/lib/server/businessValidation";
+import { requirePositive, optionalString, optionalOperationId, optionalFiniteNumber } from "@/lib/server/businessValidation";
 import { ValidationError } from "@/lib/domainErrors";
 
 export const runtime = "nodejs";
@@ -21,6 +21,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       note: optionalString(body.note, "Ghi chú"),
       kind: body.kind === "adjustment" ? "adjustment" : "payment",
       reason: optionalString(body.reason, "Lý do"),
+      // Back-dating is fine (a check received last week); a date in the future is not.
+      paidAt: optionalFiniteNumber(body.paidAt, "Ngày thanh toán", { min: Date.UTC(2000, 0, 1), max: Date.now() + 36 * 3600_000 }),
       actor: "user",
       by: user.email,
       operationId: optionalOperationId(body.operationId),
