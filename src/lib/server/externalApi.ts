@@ -1,10 +1,12 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { getAdminDb } from "./firebaseAdmin";
-import { HttpError, currentStoreId, type AuthedUser } from "./auth";
+import { HttpError, type AuthedUser } from "./auth";
 import { memberByEmail } from "./membership";
 import { executeTool, toolDefinitions } from "@/lib/ai/tools";
 import { getAllCustomers } from "./businessStore";
 import { workerBaseUrl } from "./dispatch";
+import { runInStore } from "./storeContext";
+import { DEFAULT_STORE_ID, isStoreId, storeInfo } from "@/lib/stores";
 
 /**
  * The door for OUTSIDE AI apps (Claude, ChatGPT, or a script) — used by the REST API (/api/v1/tools) and the MCP
@@ -13,6 +15,8 @@ import { workerBaseUrl } from "./dispatch";
  *
  * Off unless AI_API_ENABLED=true. Who may use it: AI_API_KEYS = "appLoginEmail:secretKey, …" — each key belongs to an
  * existing app member (storeMembers), checked live on every call, so removing the member also cuts off the key.
+ * Each key works on ONE store: "email:key" is the Wholesale store, "email:key:phone" the Phone store (any id from
+ * src/lib/stores.ts). An entry naming an unknown store is ignored, never mapped to another store.
  *
  * What it can do (narrow on purpose — docs/OPERATING_POLICY.md rule 5, "new surfaces start narrow"):
  *   - read: search/get customers, products, invoices, debt, unpaid list, deliveries, payments, last price;
@@ -24,8 +28,8 @@ import { workerBaseUrl } from "./dispatch";
  */
 
 export interface ApiConfig {
-  /** One entry per key. */
-  keys: { email: string; key: string }[];
+  /** One entry per key; `storeId` is the one store that key may read and change. */
+  keys: { email: string; key: string; storeId: string }[];
 }
 
 /** A key must be long and random; shorter ones are ignored so a weak key can never open the door. */
@@ -45,18 +49,22 @@ export function apiConfigProblem(env: Record<string, string | undefined> = proce
   if (env.AI_API_ENABLED?.trim().toLowerCase() !== "true") return null;
   if (!env.AI_API_KEYS?.trim()) return "AI_API_ENABLED is true but AI_API_KEYS is empty. Set it to loginEmail:key in Vercel and redeploy.";
   if (parseApiKeys(env.AI_API_KEYS).length === 0) {
-    return "AI_API_KEYS has no valid entry. Use loginEmail:key (key: 32+ letters, digits, - or _; no spaces, no 'Bearer'), then redeploy.";
+    return "AI_API_KEYS has no valid entry. Use loginEmail:key (key: 32+ letters, digits, - or _; no spaces, no 'Bearer'), or loginEmail:key:phone for the Phone store, then redeploy.";
   }
   return null;
 }
 
-/** "a@b.com:KEY, c@d.com:KEY2" → entries. Malformed or short entries are ignored (never widen access by accident). */
-export function parseApiKeys(raw: string): { email: string; key: string }[] {
-  const out: { email: string; key: string }[] = [];
+/**
+ * "a@b.com:KEY, c@d.com:KEY2:phone" → entries. No store part = Wholesale. Malformed or short entries, and entries
+ * naming an unknown store, are ignored (never widen access by accident).
+ */
+export function parseApiKeys(raw: string): { email: string; key: string; storeId: string }[] {
+  const out: { email: string; key: string; storeId: string }[] = [];
   // Surrounding quotes are a common copy-paste leftover in the Vercel dashboard; they are never part of a key.
   for (const entry of raw.trim().replace(/^(["'])([^]*)\1$/, "$2").split(/[,;\n]/)) {
-    const m = /^\s*([^\s:]+@[^\s:]+)\s*:\s*([A-Za-z0-9_-]+)\s*$/.exec(entry);
-    if (m && m[2].length >= MIN_KEY_LENGTH) out.push({ email: m[1].toLowerCase(), key: m[2] });
+    const m = /^\s*([^\s:]+@[^\s:]+)\s*:\s*([A-Za-z0-9_-]+)\s*(?::\s*([A-Za-z0-9_-]+)\s*)?$/.exec(entry);
+    const storeId = m?.[3] ?? DEFAULT_STORE_ID;
+    if (m && m[2].length >= MIN_KEY_LENGTH && isStoreId(storeId)) out.push({ email: m[1].toLowerCase(), key: m[2], storeId });
   }
   return out;
 }
@@ -76,12 +84,12 @@ const digest = (s: string) => createHash("sha256").update(s).digest();
 export async function authenticateApiKey(cfg: ApiConfig, given: string): Promise<AuthedUser> {
   if (!given) throw new HttpError(401, "Missing API key.");
   const givenDigest = digest(given);
-  let email: string | null = null;
+  let match: { email: string; storeId: string } | null = null;
   for (const entry of cfg.keys) {
-    if (timingSafeEqual(givenDigest, digest(entry.key)) && email === null) email = entry.email;
+    if (timingSafeEqual(givenDigest, digest(entry.key)) && match === null) match = entry;
   }
-  if (!email) throw new HttpError(401, "Invalid API key.");
-  const member = await memberByEmail(getAdminDb(), email, currentStoreId());
+  if (!match) throw new HttpError(401, "Invalid API key.");
+  const member = await memberByEmail(getAdminDb(), match.email, match.storeId);
   if (!member) throw new HttpError(403, "This key's account is not a member of the store.");
   return member;
 }
@@ -185,7 +193,15 @@ function buildCatalog(): ExternalTool[] {
 export const externalTools: ExternalTool[] = buildCatalog();
 const externalToolNames = new Set(externalTools.map((t) => t.name));
 
-/** Instructions for an outside AI connecting over MCP (sent once at connection time). */
+/** Instructions for an outside AI connecting over MCP (sent once at connection time), for the key's store. */
+export function externalInstructions(storeId: string): string {
+  const name = storeInfo(storeId).name;
+  return [
+    `This connection works on the ${name} store only. The app runs more than one store, each with its own customers, products, invoices and payments; the others are not reachable with this key.`,
+    EXTERNAL_INSTRUCTIONS,
+  ].join("\n");
+}
+
 export const EXTERNAL_INSTRUCTIONS = [
   "This is the invoice app of a small Vietnamese wholesale/grocery store. Customer and product names are often Vietnamese, typed without accents or as nicknames; search tools match them fuzzily.",
   "All amounts are USD. The app computes every total, balance and debt — always report the numbers it returns, never your own arithmetic.",
@@ -194,8 +210,15 @@ export const EXTERNAL_INSTRUCTIONS = [
   "This connection cannot record payments, edit or void invoices, set final prices on deliveries, delete products, or create or change customers — those are done in the app.",
 ].join("\n");
 
-/** Runs one outside-AI tool call as `user`. Unknown names are refused; business errors come back as results. */
+/**
+ * Runs one outside-AI tool call as `user`, inside the ONE store their key is for. Unknown names are refused;
+ * business errors come back as results.
+ */
 export async function runExternalTool(name: string, args: Record<string, unknown>, user: AuthedUser): Promise<unknown> {
+  return runInStore(user.storeId, () => runInKeyStore(name, args, user));
+}
+
+async function runInKeyStore(name: string, args: Record<string, unknown>, user: AuthedUser): Promise<unknown> {
   if (!externalToolNames.has(name)) return { status: "error", message: `Unknown tool "${name}".` };
   if (name === CONFIRM_ACTION) return confirmAction(String(args.confirmToken ?? ""), user);
   if (name === SEARCH) return searchAll(String(args.query ?? ""));

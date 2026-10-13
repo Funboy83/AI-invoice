@@ -5,6 +5,7 @@ import Sidebar from "@/components/Sidebar";
 import ChatPanel from "@/components/ChatPanel";
 import BottomNav from "@/components/BottomNav";
 import RequireAuth from "@/components/RequireAuth";
+import { MobileStoreBar } from "@/components/StoreSwitcher";
 import { AppAuthProvider } from "@/lib/useAppAuth";
 import { AiChatProvider } from "@/lib/useAiChat";
 
@@ -66,7 +67,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           */}
           <RequireAuth>
             <AiChatProvider>
-              <main className="flex-1 min-w-0 overflow-y-auto">{children}</main>
+              <main className="flex-1 min-w-0 overflow-y-auto">
+                <MobileStoreBar />
+                {children}
+              </main>
               <ChatPanel />
             </AiChatProvider>
           </RequireAuth>

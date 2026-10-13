@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { HttpError } from "./auth";
 import { ConfigError } from "./firebaseAdmin";
-import { EXTERNAL_INSTRUCTIONS, apiConfig, apiConfigProblem, authenticateApiKey, externalTools, keyFromRequest, runExternalTool } from "./externalApi";
+import { externalInstructions, apiConfig, apiConfigProblem, authenticateApiKey, externalTools, keyFromRequest, runExternalTool } from "./externalApi";
 
 /**
  * A small MCP server (Model Context Protocol, "Streamable HTTP" transport, stateless JSON responses) so Claude,
@@ -70,7 +70,7 @@ async function handleMessage(msg: JsonRpcRequest, user: Awaited<ReturnType<typeo
         protocolVersion: SUPPORTED_VERSIONS.includes(asked) ? asked : SUPPORTED_VERSIONS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: SERVER_INFO,
-        instructions: EXTERNAL_INSTRUCTIONS,
+        instructions: externalInstructions(user.storeId),
       });
     }
     case "ping":

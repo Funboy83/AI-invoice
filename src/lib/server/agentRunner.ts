@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "node:crypto";
 import { toolDefinitions, executeTool, MUTATING_TOOLS, operationIdFor, type ToolContext } from "@/lib/ai/tools";
-import { SYSTEM_PROMPT } from "@/lib/ai/systemPrompt";
+import { SYSTEM_PROMPT, storePrompt } from "@/lib/ai/systemPrompt";
+import { runInStore } from "./storeContext";
 import { choicesFromCandidates, cleanChoices, collectLinks, linksForToolResult, type ChatLink } from "@/lib/chat/links";
 import { ConfigError, getAdminDb } from "./firebaseAdmin";
 import { isMember } from "./membership";
@@ -529,7 +530,10 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
   let previousStepCalls: ToolCallDoc[] = [];
 
   // The system prompt and tool schemas are identical on every request, so mark them cacheable.
-  const system: Anthropic.Messages.TextBlockParam[] = [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }];
+  const system: Anthropic.Messages.TextBlockParam[] = [
+    { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    { type: "text", text: storePrompt(job.storeId) },
+  ];
   const cachedTools = toolDefinitions.map((t, i) =>
     i === toolDefinitions.length - 1 ? { ...t, cache_control: { type: "ephemeral" as const } } : t
   );
@@ -551,7 +555,8 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
         trace: (phase, ms, fields) => logJob("tool_phase", jobId, { step, tool: use.name, phase, ms, ...fields }),
       };
       try {
-        result = await deps.executeTool(use.name, (use.input ?? {}) as Record<string, unknown>, ctx);
+        // Tools act ONLY on the store this job was accepted for (saved on the job, never taken from the caller).
+        result = await runInStore(job.storeId, () => deps.executeTool(use.name, (use.input ?? {}) as Record<string, unknown>, ctx));
       } catch (err) {
         // For a write, an unexpected error may mean "committed but we never heard back": do NOT tell the model it
         // failed (it would retry under a new id). Abort the attempt; the retry replays the same operation id.

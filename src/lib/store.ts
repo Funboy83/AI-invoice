@@ -42,16 +42,30 @@ import type {
 } from "./types";
 import { DomainError, NotFoundError } from "./domainErrors";
 import { calcTotals, computePaymentStatus, invoiceItemsForWrite } from "./invoiceMath";
+import { DEFAULT_STORE_ID, isStoreId, storeCollectionPath, storeInfo } from "./stores";
 
 export { DomainError, NotFoundError };
 
-const productsCol = collection(db, "products");
-const customersCol = collection(db, "customers");
-const invoicesCol = collection(db, "invoices");
-const paymentsCol = collection(db, "payments");
-const logsCol = collection(db, "invoiceLogs");
-const countersCol = collection(db, "counters");
-const operationsCol = collection(db, "operations");
+/**
+ * The store whose data this browser tab is showing. Set by AppAuthProvider (useAppAuth.tsx) BEFORE any page mounts,
+ * and every page remounts when the store changes, so each listener below reads only the selected store's collections
+ * (Wholesale = top-level, other stores = stores/{id}/…, see src/lib/stores.ts).
+ */
+let activeStore = DEFAULT_STORE_ID;
+export function setActiveStore(storeId: string) {
+  if (!isStoreId(storeId)) throw new Error(`Unknown store "${storeId}".`);
+  activeStore = storeId;
+}
+export const getActiveStore = () => activeStore;
+const storeCol = (name: string) => collection(db, storeCollectionPath(activeStore, name));
+
+const productsCol = () => storeCol("products");
+const customersCol = () => storeCol("customers");
+const invoicesCol = () => storeCol("invoices");
+const paymentsCol = () => storeCol("payments");
+const logsCol = () => storeCol("invoiceLogs");
+const countersCol = () => storeCol("counters");
+const operationsCol = () => storeCol("operations");
 
 /**
  * Runs `body` in a transaction that is idempotent per `operationId`: the ledger doc `operations/{id}` is read
@@ -66,7 +80,7 @@ async function runOnce<T>(
 ): Promise<T> {
   return runTransaction(db, async (tx) => {
     if (!operationId) return body(tx);
-    const opRef = doc(operationsCol, operationId);
+    const opRef = doc(operationsCol(), operationId);
     const opSnap = await tx.get(opRef);
     if (opSnap.exists()) return JSON.parse(opSnap.data().resultJson as string) as T;
     const result = await body(tx);
@@ -102,17 +116,17 @@ function hydrateProduct(id: string, data: Record<string, unknown>): Product {
 }
 
 export function watchProducts(cb: (products: Product[]) => void, onError?: (err: unknown) => void) {
-  const q = query(productsCol, orderBy("name"));
+  const q = query(productsCol(), orderBy("name"));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateProduct(d.id, d.data()))), onError);
 }
 
 export async function getAllProducts(): Promise<Product[]> {
-  const snap = await getDocs(query(productsCol, orderBy("name")));
+  const snap = await getDocs(query(productsCol(), orderBy("name")));
   return snap.docs.map((d) => hydrateProduct(d.id, d.data()));
 }
 
 export async function getProductById(id: string): Promise<Product | null> {
-  const snap = await getDoc(doc(db, "products", id));
+  const snap = await getDoc(doc(productsCol(), id));
   return snap.exists() ? hydrateProduct(snap.id, snap.data()) : null;
 }
 
@@ -124,7 +138,7 @@ export async function getProductsByIds(ids: string[]): Promise<Map<string, Produ
   const unique = [...new Set(ids)];
   const chunks: string[][] = [];
   for (let i = 0; i < unique.length; i += 30) chunks.push(unique.slice(i, i + 30));
-  const snaps = await Promise.all(chunks.map((chunk) => getDocs(query(productsCol, where(documentId(), "in", chunk)))));
+  const snaps = await Promise.all(chunks.map((chunk) => getDocs(query(productsCol(), where(documentId(), "in", chunk)))));
   const out = new Map<string, Product>();
   for (const snap of snaps) for (const d of snap.docs) out.set(d.id, hydrateProduct(d.id, d.data()));
   return out;
@@ -158,13 +172,13 @@ export async function createProduct(input: {
     updatedAt: now,
   };
   if (input.operationId) {
-    const ref = doc(productsCol);
+    const ref = doc(productsCol());
     return runOnce(input.operationId, "createProduct", async (tx) => {
       tx.set(ref, payload);
       return hydrateProduct(ref.id, payload);
     });
   }
-  const ref = await addDoc(productsCol, payload);
+  const ref = await addDoc(productsCol(), payload);
   return hydrateProduct(ref.id, payload);
 }
 
@@ -175,20 +189,20 @@ export async function updateProduct(
 ): Promise<void> {
   if (operationId) {
     await runOnce(operationId, "updateProduct", async (tx) => {
-      const ref = doc(db, "products", id);
+      const ref = doc(productsCol(), id);
       if (!(await tx.get(ref)).exists()) throw new NotFoundError("Product not found");
       tx.update(ref, { ...changes, updatedAt: Date.now() });
       return null;
     });
     return;
   }
-  await updateDoc(doc(db, "products", id), { ...changes, updatedAt: Date.now() });
+  await updateDoc(doc(productsCol(), id), { ...changes, updatedAt: Date.now() });
 }
 
 export async function addProductAlias(id: string, alias: string, operationId?: string): Promise<void> {
   const normalized = alias.trim();
   await runOnce(operationId, "addProductAlias", async (tx) => {
-    const ref = doc(db, "products", id);
+    const ref = doc(productsCol(), id);
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new NotFoundError("Product not found");
     const product = hydrateProduct(snap.id, snap.data());
@@ -199,7 +213,7 @@ export async function addProductAlias(id: string, alias: string, operationId?: s
 }
 
 export async function deleteProduct(id: string): Promise<void> {
-  await deleteDoc(doc(db, "products", id));
+  await deleteDoc(doc(productsCol(), id));
 }
 
 /* ------------------------------- Customers ------------------------------- */
@@ -223,17 +237,17 @@ function hydrateCustomer(id: string, data: Record<string, unknown>): Customer {
 }
 
 export function watchCustomers(cb: (customers: Customer[]) => void, onError?: (err: unknown) => void) {
-  const q = query(customersCol, orderBy("name"));
+  const q = query(customersCol(), orderBy("name"));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateCustomer(d.id, d.data()))), onError);
 }
 
 export async function getAllCustomers(): Promise<Customer[]> {
-  const snap = await getDocs(query(customersCol, orderBy("name")));
+  const snap = await getDocs(query(customersCol(), orderBy("name")));
   return snap.docs.map((d) => hydrateCustomer(d.id, d.data()));
 }
 
 export async function getCustomerById(id: string): Promise<Customer | null> {
-  const snap = await getDoc(doc(db, "customers", id));
+  const snap = await getDoc(doc(customersCol(), id));
   return snap.exists() ? hydrateCustomer(snap.id, snap.data()) : null;
 }
 
@@ -265,13 +279,13 @@ export async function createCustomer(input: {
     updatedAt: now,
   };
   if (input.operationId) {
-    const ref = doc(customersCol);
+    const ref = doc(customersCol());
     return runOnce(input.operationId, "createCustomer", async (tx) => {
       tx.set(ref, payload);
       return hydrateCustomer(ref.id, payload);
     });
   }
-  const ref = await addDoc(customersCol, payload);
+  const ref = await addDoc(customersCol(), payload);
   return hydrateCustomer(ref.id, payload);
 }
 
@@ -282,20 +296,20 @@ export async function updateCustomer(
 ): Promise<void> {
   if (operationId) {
     await runOnce(operationId, "updateCustomer", async (tx) => {
-      const ref = doc(db, "customers", id);
+      const ref = doc(customersCol(), id);
       if (!(await tx.get(ref)).exists()) throw new NotFoundError("Customer not found");
       tx.update(ref, { ...changes, updatedAt: Date.now() });
       return null;
     });
     return;
   }
-  await updateDoc(doc(db, "customers", id), { ...changes, updatedAt: Date.now() });
+  await updateDoc(doc(customersCol(), id), { ...changes, updatedAt: Date.now() });
 }
 
 export async function addCustomerAlias(id: string, alias: string, operationId?: string): Promise<void> {
   const normalized = alias.trim();
   await runOnce(operationId, "addCustomerAlias", async (tx) => {
-    const ref = doc(db, "customers", id);
+    const ref = doc(customersCol(), id);
     const snap = await tx.get(ref);
     if (!snap.exists()) throw new NotFoundError("Customer not found");
     const customer = hydrateCustomer(snap.id, snap.data());
@@ -332,17 +346,17 @@ function hydrateInvoice(id: string, data: Record<string, unknown>): Invoice {
 }
 
 export function watchInvoices(cb: (invoices: Invoice[]) => void, onError?: (err: unknown) => void) {
-  const q = query(invoicesCol, orderBy("createdAt", "desc"));
+  const q = query(invoicesCol(), orderBy("createdAt", "desc"));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateInvoice(d.id, d.data()))), onError);
 }
 
 export async function getAllInvoices(): Promise<Invoice[]> {
-  const snap = await getDocs(query(invoicesCol, orderBy("createdAt", "desc")));
+  const snap = await getDocs(query(invoicesCol(), orderBy("createdAt", "desc")));
   return snap.docs.map((d) => hydrateInvoice(d.id, d.data()));
 }
 
 export async function getInvoice(id: string): Promise<Invoice | null> {
-  const snap = await getDoc(doc(db, "invoices", id));
+  const snap = await getDoc(doc(invoicesCol(), id));
   return snap.exists() ? hydrateInvoice(snap.id, snap.data()) : null;
 }
 
@@ -353,13 +367,13 @@ export async function getInvoice(id: string): Promise<Invoice | null> {
  * memory instead so nothing has to be deployed and "last price" still sees the customer's full history.)
  */
 export async function getInvoicesForCustomer(customerId: string): Promise<Invoice[]> {
-  const snap = await getDocs(query(invoicesCol, where("customerId", "==", customerId)));
+  const snap = await getDocs(query(invoicesCol(), where("customerId", "==", customerId)));
   return snap.docs.map((d) => hydrateInvoice(d.id, d.data())).sort((a, b) => b.createdAt - a.createdAt);
 }
 
 /** Live version of getInvoicesForCustomer (the customer page). Same single-field equality query, so no composite index. */
 export function watchInvoicesForCustomer(customerId: string, cb: (invoices: Invoice[]) => void, onError?: (err: unknown) => void) {
-  const q = query(invoicesCol, where("customerId", "==", customerId));
+  const q = query(invoicesCol(), where("customerId", "==", customerId));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateInvoice(d.id, d.data())).sort((a, b) => b.createdAt - a.createdAt)), onError);
 }
 
@@ -389,14 +403,14 @@ export async function createInvoice(input: {
   const { subtotal, total } = calcTotals(items, shipping, discount);
   const paymentStatus = computePaymentStatus(total, 0, input.status ?? "draft");
 
-  const invoiceRef = doc(invoicesCol);
-  const logRef = doc(logsCol);
-  const counterRef = doc(countersCol, "invoiceCounter");
+  const invoiceRef = doc(invoicesCol());
+  const logRef = doc(logsCol());
+  const counterRef = doc(countersCol(), "invoiceCounter");
 
   // Number allocation, invoice, audit log and idempotency ledger commit together (or not at all).
   return runOnce(input.operationId, "createInvoice", async (tx) => {
     const counterSnap = await tx.get(counterRef);
-    const current = counterSnap.exists() ? (counterSnap.data().value as number) : 1999;
+    const current = counterSnap.exists() ? (counterSnap.data().value as number) : storeInfo(activeStore).firstInvoiceNumber - 1;
     const value = current + 1;
     const invoiceNumber = String(value);
     tx.set(counterRef, { value }, { merge: true });
@@ -448,8 +462,8 @@ export async function updateInvoiceWithLog(input: {
   reason: string;
   operationId?: string;
 }): Promise<Invoice> {
-  const invoiceRef = doc(db, "invoices", input.invoiceId);
-  const logRef = doc(logsCol);
+  const invoiceRef = doc(invoicesCol(), input.invoiceId);
+  const logRef = doc(logsCol());
 
   return runOnce(input.operationId, "updateInvoice", async (tx) => {
     const snap = await tx.get(invoiceRef);
@@ -524,9 +538,9 @@ export async function recordPayment(input: {
   actor: LogActor;
   operationId?: string;
 }): Promise<{ invoice: Invoice; payment: Payment }> {
-  const invoiceRef = doc(db, "invoices", input.invoiceId);
-  const paymentRef = doc(paymentsCol);
-  const logRef = doc(logsCol);
+  const invoiceRef = doc(invoicesCol(), input.invoiceId);
+  const paymentRef = doc(paymentsCol());
+  const logRef = doc(logsCol());
 
   return runOnce(input.operationId, "recordPayment", async (tx) => {
     const snap = await tx.get(invoiceRef);
@@ -573,7 +587,7 @@ export async function recordPayment(input: {
 }
 
 export async function getPaymentsForInvoice(invoiceId: string): Promise<Payment[]> {
-  const snap = await getDocs(paymentsCol);
+  const snap = await getDocs(paymentsCol());
   return snap.docs
     .map((d) => ({ id: d.id, ...d.data() } as Payment))
     .filter((p) => p.invoiceId === invoiceId)
@@ -581,7 +595,7 @@ export async function getPaymentsForInvoice(invoiceId: string): Promise<Payment[
 }
 
 export async function getAllPayments(): Promise<Payment[]> {
-  const snap = await getDocs(paymentsCol);
+  const snap = await getDocs(paymentsCol());
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Payment)).sort((a, b) => b.createdAt - a.createdAt);
 }
 
@@ -602,7 +616,7 @@ export async function getUnpaidInvoices(statusFilter?: InvoiceStatus): Promise<I
 }
 
 export function watchInvoiceLogs(invoiceId: string, cb: (logs: InvoiceLog[]) => void, onError?: (err: unknown) => void) {
-  const q = query(logsCol, orderBy("timestamp", "desc"));
+  const q = query(logsCol(), orderBy("timestamp", "desc"));
   return onSnapshot(
     q,
     (snap) => {

@@ -39,7 +39,7 @@ describe("turning the door on", () => {
   });
 
   it("accepts a value pasted with surrounding quotes", () => {
-    expect(parseApiKeys(`"wife@example.com:${KEY}"`)).toEqual([{ email: "wife@example.com", key: KEY }]);
+    expect(parseApiKeys(`"wife@example.com:${KEY}"`)).toEqual([{ email: "wife@example.com", key: KEY, storeId: "main" }]);
   });
 
   it("explains a switched-on door whose keys are missing or mistyped, and stays quiet when it is off or fine", () => {
@@ -53,7 +53,7 @@ describe("turning the door on", () => {
   it("ignores short or malformed keys, so a weak key never opens it", () => {
     expect(parseApiKeys("wife@example.com:short")).toEqual([]);
     expect(parseApiKeys(`no-email:${KEY}`)).toEqual([]);
-    expect(parseApiKeys(`Wife@Example.com:${KEY}`)).toEqual([{ email: "wife@example.com", key: KEY }]);
+    expect(parseApiKeys(`Wife@Example.com:${KEY}`)).toEqual([{ email: "wife@example.com", key: KEY, storeId: "main" }]);
   });
 });
 

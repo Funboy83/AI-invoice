@@ -490,7 +490,7 @@ export async function failJob(jobId: string, workerId: string | null, failure: J
 export async function retryJob(user: AuthedUser, jobId: string): Promise<{ status: JobStatus }> {
   return db().runTransaction(async (tx) => {
     const job = await readJobInTx(tx, jobId);
-    if (!job || job.ownerUid !== user.uid) throw new HttpError(404, "Không tìm thấy yêu cầu này.");
+    if (!job || job.ownerUid !== user.uid || job.storeId !== user.storeId) throw new HttpError(404, "Không tìm thấy yêu cầu này.");
     const convSnap = await tx.get(convRef(job.conversationId));
     const conv = convSnap.data() as ConversationDoc;
     if (job.status !== "failed") return { status: job.status };

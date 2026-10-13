@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { errorResponse } from "@/lib/server/http";
-import { EXTERNAL_INSTRUCTIONS, apiConfig, apiConfigProblem, authenticateApiKey, externalTools, keyFromRequest } from "@/lib/server/externalApi";
+import { externalInstructions, apiConfig, apiConfigProblem, authenticateApiKey, externalTools, keyFromRequest } from "@/lib/server/externalApi";
 
 export const runtime = "nodejs";
 
@@ -12,8 +12,8 @@ export async function GET(req: Request) {
     return problem ? NextResponse.json({ error: problem }, { status: 503 }) : NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   try {
-    await authenticateApiKey(cfg, keyFromRequest(req));
-    return NextResponse.json({ instructions: EXTERNAL_INSTRUCTIONS, tools: externalTools });
+    const user = await authenticateApiKey(cfg, keyFromRequest(req));
+    return NextResponse.json({ instructions: externalInstructions(user.storeId), tools: externalTools });
   } catch (err) {
     return errorResponse(err);
   }

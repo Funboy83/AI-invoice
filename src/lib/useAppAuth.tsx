@@ -3,6 +3,19 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut as firebaseSignOut, type User } from "firebase/auth";
 import { getClientAuth } from "./firebase";
+import { setActiveStore } from "./store";
+import { DEFAULT_STORE_ID, STORE_HEADER, isStoreId } from "./stores";
+
+/** Remembers the last store picked on this device (a convenience only; the server checks access on every call). */
+const STORE_STORAGE_KEY = "invoice-ai.store";
+function readSavedStore(): string {
+  try {
+    const saved = window.localStorage.getItem(STORE_STORAGE_KEY);
+    return isStoreId(saved) ? saved : DEFAULT_STORE_ID;
+  } catch {
+    return DEFAULT_STORE_ID;
+  }
+}
 
 /**
  * The one authorization gate for the whole app: a Firebase Auth session AND current store membership (checked
@@ -19,8 +32,14 @@ interface AppAuth {
   email: string | null;
   /** Set only in the "denied" state: why (not authorized, or the check itself failed — e.g. offline). */
   deniedReason: string | null;
-  /** Only meaningful once authorized — which private chat conversation belongs to this account. */
+  /** Only meaningful once authorized — which private chat conversation belongs to this account in this store. */
   conversationId: string | null;
+  /**
+   * The store everything on screen belongs to (src/lib/stores.ts). Every API call carries it, every page reads only
+   * its data, and changing it remounts every page and the chat, so nothing from the previous store stays on screen.
+   */
+  storeId: string;
+  setStoreId(storeId: string): void;
   signIn(email: string, password: string): Promise<string | null>;
   signOut(): Promise<void>;
   /** fetch with the current ID token attached; used for every authenticated API call. */
@@ -42,8 +61,29 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
   const [authReady, setAuthReady] = useState(false);
   // Both tagged with the uid they were computed for, so a mid-flight check for a PREVIOUS uid can never be
   // mistaken for the current one's result (matters for account switching without an intermediate sign-out).
-  const [session, setSession] = useState<{ uid: string; conversationId: string; email: string } | null>(null);
-  const [denied, setDenied] = useState<{ uid: string; reason: string } | null>(null);
+  const [session, setSession] = useState<{ uid: string; storeId: string; conversationId: string; email: string } | null>(null);
+  const [denied, setDenied] = useState<{ uid: string; storeId: string; reason: string } | null>(null);
+  // Starts unknown (the server render can't see this device's saved choice) so no page mounts before it's read.
+  const [storeId, setStoreIdState] = useState<string | null>(null);
+
+  useEffect(() => {
+    const saved = readSavedStore();
+    setActiveStore(saved);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time read of this device's saved store after mount
+    setStoreIdState(saved);
+  }, []);
+
+  const setStoreId = useCallback((next: string) => {
+    if (!isStoreId(next)) return;
+    try {
+      window.localStorage.setItem(STORE_STORAGE_KEY, next);
+    } catch {
+      // private mode etc. — the choice just won't be remembered next time
+    }
+    // Before the state change, so pages remounting for the new store already read the new store's collections.
+    setActiveStore(next);
+    setStoreIdState(next);
+  }, []);
   const [checkTick, setCheckTick] = useState(0);
 
   const uid = user?.uid ?? null;
@@ -55,13 +95,24 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const authedFetch = useCallback(async (url: string, init?: RequestInit) => {
-    const token = await getClientAuth().currentUser?.getIdToken();
-    return fetch(url, { ...init, headers: { ...(init?.headers ?? {}), "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` } });
-  }, []);
+  const authedFetch = useCallback(
+    async (url: string, init?: RequestInit) => {
+      const token = await getClientAuth().currentUser?.getIdToken();
+      return fetch(url, {
+        ...init,
+        headers: {
+          ...(init?.headers ?? {}),
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token ?? ""}`,
+          [STORE_HEADER]: storeId ?? DEFAULT_STORE_ID,
+        },
+      });
+    },
+    [storeId]
+  );
 
   useEffect(() => {
-    if (!uid) return;
+    if (!uid || !storeId) return;
     let cancelled = false;
     (async () => {
       try {
@@ -69,23 +120,23 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
         const data = await res.json().catch(() => ({}));
         if (cancelled) return;
         if (res.ok) {
-          setSession({ uid, conversationId: data.conversationId, email: data.email ?? "" });
+          setSession({ uid, storeId, conversationId: data.conversationId, email: data.email ?? "" });
           setDenied(null);
         } else {
           setSession(null);
-          setDenied({ uid, reason: data.error ?? "Tài khoản này không có quyền truy cập." });
+          setDenied({ uid, storeId, reason: data.error ?? "Tài khoản này không có quyền truy cập." });
         }
       } catch {
         if (!cancelled) {
           setSession(null);
-          setDenied({ uid, reason: "Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại." });
+          setDenied({ uid, storeId, reason: "Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại." });
         }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [uid, authedFetch, checkTick]);
+  }, [uid, storeId, authedFetch, checkTick]);
 
   const recheck = useCallback(() => setCheckTick((t) => t + 1), []);
 
@@ -127,22 +178,28 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
     setDenied(null);
   }, []);
 
-  const authState: AuthState = !authReady
+  // A session/denial only counts for the uid AND store it was checked for, so after a store switch nothing renders
+  // until the new store's access is confirmed.
+  const sessionCurrent = session !== null && session.uid === uid && session.storeId === storeId;
+  const deniedCurrent = denied !== null && denied.uid === uid && denied.storeId === storeId;
+  const authState: AuthState = !authReady || !storeId
     ? "loading"
     : !user
       ? "signedOut"
-      : session?.uid === uid
+      : sessionCurrent
         ? "authorized"
-        : denied?.uid === uid
+        : deniedCurrent
           ? "denied"
-          : "loading"; // checking the (possibly new) uid's membership
+          : "loading"; // checking the (possibly new) uid's membership for this store
 
   const value: AppAuth = {
     authState,
     uid,
-    email: session?.uid === uid ? session.email : (user?.email ?? null),
-    deniedReason: denied?.uid === uid ? denied.reason : null,
-    conversationId: session?.uid === uid ? session.conversationId : null,
+    email: sessionCurrent ? session.email : (user?.email ?? null),
+    deniedReason: deniedCurrent ? denied.reason : null,
+    conversationId: sessionCurrent ? session.conversationId : null,
+    storeId: storeId ?? DEFAULT_STORE_ID,
+    setStoreId,
     signIn,
     signOut,
     authedFetch,

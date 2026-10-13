@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db } from "./firebase";
 import { useAppAuth, isPermissionDenied } from "./useAppAuth";
+import { DEFAULT_STORE_ID } from "./stores";
 import type { ChatMessageDoc, ClientJobStatus, JobView } from "./chat/types";
 import { cleanChoices, isSafeChatHref, type ChatLink } from "./chat/links";
 
@@ -66,10 +67,10 @@ const Ctx = createContext<AiChat | null>(null);
 const newRequestId = () =>
   (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}${Math.random().toString(36).slice(2)}`).replace(/[^A-Za-z0-9_-]/g, "");
 
-const storageKey = (uid: string) => `aiChatPending:v1:${uid}`;
-function loadPending(uid: string): PendingSend[] {
+const storageKey = (owner: string) => `aiChatPending:v1:${owner}`;
+function loadPending(owner: string): PendingSend[] {
   try {
-    const raw = window.localStorage.getItem(storageKey(uid));
+    const raw = window.localStorage.getItem(storageKey(owner));
     const list = raw ? (JSON.parse(raw) as PendingSend[]) : [];
     // A page that closed mid-request doesn't know if the server got it — show it as unsent; resending is duplicate-safe.
     return list.map((p) => (p.state === "sending" ? { ...p, state: "unsent" as const, error: UNSENT_TEXT } : p));
@@ -77,9 +78,9 @@ function loadPending(uid: string): PendingSend[] {
     return [];
   }
 }
-function savePending(uid: string, list: PendingSend[]) {
+function savePending(owner: string, list: PendingSend[]) {
   try {
-    window.localStorage.setItem(storageKey(uid), JSON.stringify(list));
+    window.localStorage.setItem(storageKey(owner), JSON.stringify(list));
   } catch {
     /* storage unavailable (private mode) — pending messages just won't survive a reload */
   }
@@ -93,10 +94,10 @@ const RESUME_POLL_MS = 30_000;
  * useAppAuth() are always present here — this component is never mounted while signed out, denied, or loading.
  */
 export function AiChatProvider({ children }: { children: ReactNode }) {
-  const { uid, conversationId, authedFetch, notifyPossibleRevocation } = useAppAuth();
+  const { uid, storeId, conversationId, authedFetch, notifyPossibleRevocation } = useAppAuth();
   const [transcript, setTranscript] = useState<{ conversationId: string; docs: ChatMessageDoc[] } | null>(null);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
-  const [pendingState, setPendingState] = useState<{ uid: string; list: PendingSend[] } | null>(null);
+  const [pendingState, setPendingState] = useState<{ owner: string; list: PendingSend[] } | null>(null);
   const [input, setInput] = useState("");
   const [online, setOnline] = useState(true);
   const [notice, setNotice] = useState<string | null>(null);
@@ -137,12 +138,15 @@ export function AiChatProvider({ children }: { children: ReactNode }) {
   const docs = transcript && transcript.conversationId === conversationId ? transcript.docs : null;
 
   /* ---- messages not yet accepted by the server (kept in localStorage so a reload doesn't lose them) ---- */
+  // Kept per account AND per store, so a message typed in one store is never resent into the other. (The Wholesale
+  // key is unchanged, so anything already waiting there stays with Wholesale.)
+  const pendingOwner = uid ? (storeId === DEFAULT_STORE_ID ? uid : `${uid}:${storeId}`) : null;
   useEffect(() => {
-    if (!uid) return;
+    if (!pendingOwner) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from localStorage per account
-    setPendingState({ uid, list: loadPending(uid) });
-  }, [uid]);
-  const storedPending = useMemo(() => (pendingState && pendingState.uid === uid ? pendingState.list : []), [pendingState, uid]);
+    setPendingState({ owner: pendingOwner, list: loadPending(pendingOwner) });
+  }, [pendingOwner]);
+  const storedPending = useMemo(() => (pendingState && pendingState.owner === pendingOwner ? pendingState.list : []), [pendingState, pendingOwner]);
   // Once the transcript shows a request, the server has it — the local copy is redundant (and pruned on the next write).
   const pending = useMemo(() => {
     const known = new Set((docs ?? []).map((d) => d.requestId));
@@ -151,14 +155,14 @@ export function AiChatProvider({ children }: { children: ReactNode }) {
 
   const updatePending = useCallback(
     (fn: (list: PendingSend[]) => PendingSend[]) => {
-      if (!uid) return;
+      if (!pendingOwner) return;
       setPendingState((prev) => {
-        const next = fn(prev && prev.uid === uid ? prev.list : []).filter((p) => !knownRequests.current.has(p.requestId));
-        savePending(uid, next);
-        return { uid, list: next };
+        const next = fn(prev && prev.owner === pendingOwner ? prev.list : []).filter((p) => !knownRequests.current.has(p.requestId));
+        savePending(pendingOwner, next);
+        return { owner: pendingOwner, list: next };
       });
     },
-    [uid]
+    [pendingOwner]
   );
 
   /* ---- reconnect to work in progress: nudge unfinished jobs so a dead worker never strands a request ---- */

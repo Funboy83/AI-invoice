@@ -1,7 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import { getAdminDb } from "./firebaseAdmin";
 import { memberByEmail } from "./membership";
-import { HttpError, currentStoreId, type AuthedUser } from "./auth";
+import { HttpError, type AuthedUser } from "./auth";
+import { DEFAULT_STORE_ID } from "@/lib/stores";
 import { workerBaseUrl } from "./dispatch";
 import { logJob } from "./jobLog";
 import { acceptMessage, getReplyMessage, getReplyMessageBySeq, telegramConversationIdFor, type JobDoc, type JobOrigin } from "./chatJobs";
@@ -217,7 +218,8 @@ export interface TgUpdate {
 async function memberForTelegramUser(cfg: TelegramConfig, telegramUserId: number): Promise<AuthedUser | null> {
   const email = cfg.allowed.get(telegramUserId);
   if (!email) return null;
-  return memberByEmail(getAdminDb(), email, currentStoreId());
+  // The Telegram bot has no store picker: it always works on the Wholesale store.
+  return memberByEmail(getAdminDb(), email, DEFAULT_STORE_ID);
 }
 
 const WELCOME =

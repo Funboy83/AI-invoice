@@ -1,5 +1,7 @@
 import { FieldPath, Timestamp, type DocumentReference, type Firestore, type Transaction } from "firebase-admin/firestore";
 import { getAdminDb } from "./firebaseAdmin";
+import { activeStoreId } from "./storeContext";
+import { storeCollectionPath, storeInfo } from "@/lib/stores";
 import { DomainError, NotFoundError, OperationConflictError } from "@/lib/domainErrors";
 import { assertFiniteAmount, assertFiniteTotals, assertNonNegativeAmount, assertPositiveAmount, calcTotals, computePaymentStatus, invoiceItemsForWrite, sanitizeInvoiceItems } from "@/lib/invoiceMath";
 import { isCommittedStatus, isOpenDelivery, type Customer, type CustomInvoiceDefaults, type InvoicePrintInfo, type PrintParty, type DeliveryInfo, type Invoice, type InvoiceLineItem, type InvoiceLog, type InvoiceStatus, type LogActor, type Payment, type Product } from "@/lib/types";
@@ -17,15 +19,19 @@ import { isCommittedStatus, isOpenDelivery, type Customer, type CustomInvoiceDef
 export { DomainError, NotFoundError };
 
 const db = (): Firestore => getAdminDb();
-const productsCol = () => db().collection("products");
-const customersCol = () => db().collection("customers");
-const invoicesCol = () => db().collection("invoices");
-const paymentsCol = () => db().collection("payments");
-const logsCol = () => db().collection("invoiceLogs");
-const countersCol = () => db().collection("counters");
-const operationsCol = () => db().collection("operations");
-const printInfoCol = () => db().collection("invoicePrintInfo");
-const settingsCol = () => db().collection("settings");
+// Every collection belongs to the store the current request is for (storeContext.ts): Wholesale ("main") keeps the
+// top-level collections, other stores live under stores/{id}/…. activeStoreId() throws when no store was set, so
+// nothing here can ever fall back to another store's data.
+const col = (name: string) => db().collection(storeCollectionPath(activeStoreId(), name));
+const productsCol = () => col("products");
+const customersCol = () => col("customers");
+const invoicesCol = () => col("invoices");
+const paymentsCol = () => col("payments");
+const logsCol = () => col("invoiceLogs");
+const countersCol = () => col("counters");
+const operationsCol = () => col("operations");
+const printInfoCol = () => col("invoicePrintInfo");
+const settingsCol = () => col("settings");
 
 /**
  * Runs `body` in a transaction idempotent per `operationId` (see store.ts's runOnce for the base contract — same
@@ -407,6 +413,7 @@ export async function createInvoice(input: {
   const invoiceRef = invoicesCol().doc();
   const logRef = logsCol().doc();
   const counterRef = countersCol().doc("invoiceCounter");
+  const firstNumber = storeInfo(activeStoreId()).firstInvoiceNumber;
 
   const willBeCommitted = isCommittedStatus(paymentStatus);
   const stockProductIds = willBeCommitted ? [...aggregateQuantitiesByProduct(items).keys()] : [];
@@ -418,7 +425,7 @@ export async function createInvoice(input: {
     const productInfo = stockProductIds.length ? await readProductsForStock(tx, stockProductIds) : new Map();
     const { writes: stockWrites, deductedQuantities, warnings: stockWarnings } = computeStockSync(productInfo, [], willBeCommitted, items);
 
-    const current = counterSnap.exists ? ((counterSnap.data() as { value: number }).value as number) : 1999;
+    const current = counterSnap.exists ? ((counterSnap.data() as { value: number }).value as number) : firstNumber - 1;
     const value = current + 1;
     const invoiceNumber = String(value);
     tx.set(counterRef, { value }, { merge: true });

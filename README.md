@@ -116,6 +116,7 @@ Claude, ChatGPT or a script can use the store's data through the **same tools** 
 
 - `AI_API_ENABLED=true`
 - `AI_API_KEYS="her@example.com:<random key, 32+ letters/digits>, …"` — each key belongs to an existing store member (checked live, so `members:remove` also cuts off the key). Make a key with `openssl rand -base64 33 | tr '+/' '-_'`.
+  Each key works on one store: `email:key` is the Wholesale store, `email:key:phone` is the Phone store. To use both from Claude, add two keys (two connectors).
 
 Endpoints:
 - MCP (Streamable HTTP, JSON responses): `POST /api/mcp` with `Authorization: Bearer <key>`, or `POST /api/mcp/<key>` for apps whose connector screen only takes a URL (claude.ai, ChatGPT). Treat that link like a password.

@@ -1,4 +1,5 @@
 import type { Firestore } from "firebase-admin/firestore";
+import { isStoreId } from "@/lib/stores";
 
 /**
  * The ONE administrator-controlled source of "who may use this store" — a Firestore document per uid, checked live
@@ -10,7 +11,10 @@ import type { Firestore } from "firebase-admin/firestore";
 export interface MemberDoc {
   uid: string;
   email: string;
+  /** The app this membership is for (membershipStoreId()), NOT which business store — see `stores`. */
   storeId: string;
+  /** Optional: limits this member to these business stores (src/lib/stores.ts). Absent = every store. */
+  stores?: string[];
   addedAt: number;
   /** Email of the administrator who ran the bootstrap script, for audit purposes — not itself a security check. */
   addedByEmail: string;
@@ -23,17 +27,31 @@ export function memberDocId(uid: string): string {
 }
 
 /**
- * True iff `uid` has a membership doc for `storeId`. A doc that exists but names a DIFFERENT storeId is treated as
- * not-a-member (defends against a stale/misconfigured doc silently authorizing someone into the wrong store) —
- * this app supports exactly one configured store, never multiple, so any mismatch is a configuration error, not a
- * grant.
+ * Which app this membership list is for: every member doc carries this id in `storeId` (APP_STORE_ID, default
+ * "main"; must match STORE_ID() in firestore.rules). A doc naming a DIFFERENT id is a stale/misconfigured doc and
+ * never grants anything.
+ */
+export function membershipStoreId(): string {
+  return process.env.APP_STORE_ID?.trim() || "main";
+}
+
+/**
+ * True iff `uid` may use the business store `storeId` (one of src/lib/stores.ts). A member of this app may use
+ * every store it runs (Wholesale and Phone store share one login) unless their doc lists `stores: [...]`, which
+ * then limits them to just those. An unknown store id is always refused — a forged or mistyped store never
+ * passes, and never falls back to another store.
  */
 export async function isMember(db: Firestore, uid: string, storeId: string): Promise<boolean> {
-  if (!uid || !storeId) return false;
+  if (!uid || !isStoreId(storeId)) return false;
   const snap = await db.collection(MEMBERS_COLLECTION).doc(memberDocId(uid)).get();
   if (!snap.exists) return false;
-  const data = snap.data() as Partial<MemberDoc> | undefined;
-  return data?.storeId === storeId;
+  return grantsStore(snap.data() as Partial<MemberDoc> | undefined, storeId);
+}
+
+function grantsStore(data: Partial<MemberDoc> | undefined, storeId: string): boolean {
+  if (data?.storeId !== membershipStoreId()) return false;
+  if (Array.isArray(data.stores)) return data.stores.includes(storeId);
+  return true;
 }
 
 /**
@@ -42,9 +60,9 @@ export async function isMember(db: Firestore, uid: string, storeId: string): Pro
  */
 export async function memberByEmail(db: Firestore, email: string, storeId: string): Promise<{ uid: string; email: string; storeId: string } | null> {
   const wanted = email.trim().toLowerCase();
-  if (!wanted || !storeId) return null;
+  if (!wanted || !isStoreId(storeId)) return null;
   const snap = await db.collection(MEMBERS_COLLECTION).where("email", "==", wanted).limit(5).get();
-  const doc = snap.docs.find((d) => d.data().storeId === storeId);
+  const doc = snap.docs.find((d) => grantsStore(d.data() as Partial<MemberDoc>, storeId));
   if (!doc) return null;
   return { uid: (doc.data().uid as string) || doc.id, email: wanted, storeId };
 }

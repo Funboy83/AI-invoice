@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, FileText, FileStack, Boxes, Users } from "lucide-react";
 import clsx from "clsx";
+import StoreSwitcher from "./StoreSwitcher";
 
 const links = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -21,6 +22,7 @@ export default function Sidebar() {
       <div className="px-5 py-5 border-b border-slate-200">
         <p className="text-lg font-semibold text-slate-900">Invoice AI</p>
         <p className="text-xs text-slate-500">Virtual secretary</p>
+        <StoreSwitcher className="mt-3" />
       </div>
       <nav className="flex-1 px-3 py-4 space-y-1">
         {links.map(({ href, label, icon: Icon }) => {

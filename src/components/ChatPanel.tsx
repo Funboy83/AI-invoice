@@ -6,6 +6,7 @@ import clsx from "clsx";
 import { useAiChat } from "@/lib/useAiChat";
 import { useAppAuth } from "@/lib/useAppAuth";
 import ChatThread from "./ChatThread";
+import { storeInfo } from "@/lib/stores";
 
 /**
  * Desktop-only floating AI chat drawer. On mobile the AI is the full-screen home tab instead (see MobileChatHome).
@@ -25,7 +26,7 @@ export default function ChatPanel() {
     openAfterSignIn = false;
     return requested;
   });
-  const { email, signOut } = useAppAuth();
+  const { email, signOut, storeId } = useAppAuth();
   const { input, setInput, send, busy } = useAiChat();
 
   return (
@@ -53,7 +54,7 @@ export default function ChatPanel() {
             </div>
             <div>
               <p className="text-sm font-semibold text-slate-900">AI Secretary</p>
-              <p className="text-[11px] text-slate-500">Invoices · Products · Customers</p>
+              <p className="text-[11px] text-slate-500">Cửa hàng: <span className="font-semibold text-slate-700">{storeInfo(storeId).name}</span></p>
             </div>
           </div>
           <div className="flex items-center gap-3">

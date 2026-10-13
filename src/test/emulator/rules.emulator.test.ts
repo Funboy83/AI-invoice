@@ -203,3 +203,40 @@ describe("a store context mismatch is rejected, not silently granted (single-sto
     await assertFails(getDoc(doc(asWrongStore, "products", "p1")));
   });
 });
+
+describe("the Phone store's data (stores/phone/…) — readable by members only, never writable from a browser", () => {
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, "stores", "phone", "invoices", "pinv1"), { invoiceNumber: "1000", customerName: "Anh Tuấn", total: 700, createdAt: 1 });
+      await setDoc(doc(db, "stores", "phone", "products", "pp1"), { name: "iPhone 15", defaultPrice: 700, createdAt: 1 });
+      await setDoc(doc(db, "stores", "phone", "counters", "invoiceCounter"), { value: 1000 });
+      await setDoc(doc(db, "stores", "evil", "invoices", "x1"), { invoiceNumber: "1", createdAt: 1 });
+      await setDoc(doc(db, "storeMembers", "wholesale-only"), { uid: "wholesale-only", email: "w@x.com", storeId: STORE_ID, stores: ["main"], addedAt: 1, addedByEmail: "a@x.com" });
+    });
+  });
+
+  it("a member reads the Phone store's business data", async () => {
+    await assertSucceeds(getDoc(doc(asMember(), "stores", "phone", "invoices", "pinv1")));
+    await assertSucceeds(getDocs(collection(asMember(), "stores", "phone", "products")));
+  });
+
+  it("non-members, signed-out visitors and members limited to Wholesale can't read it", async () => {
+    await assertFails(getDoc(doc(asNonMember(), "stores", "phone", "invoices", "pinv1")));
+    await assertFails(getDoc(doc(asAnon(), "stores", "phone", "invoices", "pinv1")));
+    const asWholesaleOnly = env.authenticatedContext("wholesale-only", { email: "w@x.com" }).firestore();
+    await assertFails(getDoc(doc(asWholesaleOnly, "stores", "phone", "invoices", "pinv1")));
+    await assertSucceeds(getDoc(doc(asWholesaleOnly, "invoices", "inv1")));
+  });
+
+  it("internal collections inside a store and unknown stores stay closed", async () => {
+    await assertFails(getDoc(doc(asMember(), "stores", "phone", "counters", "invoiceCounter")));
+    await assertFails(getDoc(doc(asMember(), "stores", "evil", "invoices", "x1")));
+  });
+
+  it("no browser write is allowed, even by a member", async () => {
+    await assertFails(setDoc(doc(asMember(), "stores", "phone", "invoices", "new1"), { total: 1 }));
+    await assertFails(updateDoc(doc(asMember(), "stores", "phone", "invoices", "pinv1"), { total: 0 }));
+    await assertFails(deleteDoc(doc(asMember(), "stores", "phone", "products", "pp1")));
+  });
+});

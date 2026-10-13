@@ -11,9 +11,9 @@ service cloud.firestore {
     // authenticated server request — the SAME source, so there is exactly one place membership is decided, not
     // two lists that can drift apart.
     //
-    // STORE_ID must match APP_STORE_ID (defaults to "main"; see .env.local.example). There is exactly one
-    // configured store — this is not multi-tenant isolation, just a guard against a stale/misconfigured doc
-    // silently granting access under the wrong store context.
+    // STORE_ID must match APP_STORE_ID (defaults to "main"; see .env.local.example). It names this APP's member
+    // list, not a business store: a member may read every store the app runs (see /stores below) unless their doc
+    // has `stores: [...]`. Guards against a stale/misconfigured doc granting access under the wrong app.
     function STORE_ID() { return "main"; }
 
     function isMember() {
@@ -55,6 +55,24 @@ service cloud.firestore {
     match /invoices/{id}     { allow read: if isMember(); allow write: if false; }
     match /invoiceLogs/{id}  { allow read: if isMember(); allow write: if false; }
     match /payments/{id}     { allow read: if isMember(); allow write: if false; }
+
+    // ---- Other stores (src/lib/stores.ts): the same business collections, one separate area per store ---------
+    // Wholesale ("main") is the top-level collections above; every other store lives under stores/{storeId}/….
+    // Members read them exactly like the Wholesale ones (one login, every store), but ONLY known stores and ONLY
+    // the five business collections; counters/operations/settings/print info inside a store stay closed, and no
+    // browser ever writes here — all writes go through the server, which picks the store it authenticated.
+    function isKnownExtraStore(storeId) { return storeId in ["phone"]; }
+    function isMemberOfStore(storeId) {
+      return isMember()
+        && (!('stores' in get(/databases/$(database)/documents/storeMembers/$(request.auth.uid)).data)
+            || storeId in get(/databases/$(database)/documents/storeMembers/$(request.auth.uid)).data.stores);
+    }
+    match /stores/{storeId}/{collection}/{id} {
+      allow read: if isKnownExtraStore(storeId)
+        && collection in ["products", "customers", "invoices", "invoiceLogs", "payments"]
+        && isMemberOfStore(storeId);
+      allow write: if false;
+    }
 
     // ---- Internal-only: nothing in the app ever reads these from the browser ----------------------------------
     // `counters` (invoice numbering) and `operations` (the idempotency ledger) are implementation details of

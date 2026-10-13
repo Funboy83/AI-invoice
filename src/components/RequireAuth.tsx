@@ -3,6 +3,7 @@
 import { type ReactNode } from "react";
 import { Loader2, ShieldAlert, LogOut } from "lucide-react";
 import { useAppAuth } from "@/lib/useAppAuth";
+import { DEFAULT_STORE_ID, storeInfo } from "@/lib/stores";
 import ChatSignIn from "./ChatSignIn";
 
 /**
@@ -13,7 +14,7 @@ import ChatSignIn from "./ChatSignIn";
  * without passing through "loading" first, React would still fully remount rather than reuse stale state.
  */
 export default function RequireAuth({ children }: { children: ReactNode }) {
-  const { authState, uid, email, deniedReason, signOut } = useAppAuth();
+  const { authState, uid, email, deniedReason, signOut, storeId, setStoreId } = useAppAuth();
 
   // RequireAuth sits directly inside <body className="flex">, alongside Sidebar/BottomNav (see layout.tsx), and
   // wraps <main className="flex-1 …"> — every branch below needs the SAME "flex-1 min-w-0" sizing that <main>
@@ -47,6 +48,14 @@ export default function RequireAuth({ children }: { children: ReactNode }) {
           </p>
           {email && <p className="mt-1 text-xs text-slate-400">{email}</p>}
         </div>
+        {storeId !== DEFAULT_STORE_ID && (
+          <button
+            onClick={() => setStoreId(DEFAULT_STORE_ID)}
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            Về cửa hàng {storeInfo(DEFAULT_STORE_ID).name}
+          </button>
+        )}
         <button
           onClick={() => signOut()}
           className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
@@ -57,11 +66,12 @@ export default function RequireAuth({ children }: { children: ReactNode }) {
     );
   }
 
-  // display:contents — a real DOM node (so key={uid} forces a remount on account switch) that doesn't itself
+  // display:contents — a real DOM node (so key={uid:store} forces a remount on account OR store switch: every page,
+  // listener and the chat start fresh, reading only the newly selected store) that doesn't itself
   // participate in the flex box model, so <main>/<ChatPanel> inside `children` still lay out as if they were
   // direct children of body, exactly as before RequireAuth existed.
   return (
-    <div key={uid} className="contents">
+    <div key={`${uid}:${storeId}`} className="contents">
       {children}
     </div>
   );

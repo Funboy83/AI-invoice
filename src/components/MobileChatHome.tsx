@@ -4,6 +4,7 @@ import { Bot, Send, Sparkles } from "lucide-react";
 import { useAiChat, QUICK_ACTIONS } from "@/lib/useAiChat";
 import { useAppAuth } from "@/lib/useAppAuth";
 import ChatThread from "./ChatThread";
+import StoreSwitcher from "./StoreSwitcher";
 
 /**
  * Full-screen AI chat used as the mobile home tab — the primary interface on iPhone. Rendered only inside
@@ -25,7 +26,7 @@ export default function MobileChatHome() {
           </div>
           <div>
             <p className="text-sm font-semibold text-slate-900">AI Secretary</p>
-            <p className="text-[11px] text-slate-500">Hôm nay bạn muốn làm gì?</p>
+            <StoreSwitcher size="sm" className="mt-0.5" />
           </div>
         </div>
         <button onClick={() => signOut()} title={email ?? undefined} className="px-2 py-2 text-xs text-slate-400 active:text-slate-700">

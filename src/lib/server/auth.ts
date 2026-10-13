@@ -1,9 +1,11 @@
 import { ConfigError, getAdminAuth, getAdminDb } from "./firebaseAdmin";
-import { isMember } from "./membership";
+import { isMember, membershipStoreId } from "./membership";
+import { DEFAULT_STORE_ID, STORE_HEADER, isStoreId } from "@/lib/stores";
 
 export interface AuthedUser {
   uid: string;
   email: string;
+  /** The business store this request acts on (src/lib/stores.ts) — every read and write is limited to it. */
   storeId: string;
 }
 
@@ -16,8 +18,20 @@ export class HttpError extends Error {
   }
 }
 
+/** The membership list's app id (see membership.ts). Doors with no store picker (Telegram) use DEFAULT_STORE_ID. */
 export function currentStoreId(): string {
-  return process.env.APP_STORE_ID?.trim() || "main";
+  return membershipStoreId();
+}
+
+/**
+ * The store a browser request is for, from the X-Store-Id header. A request with no header is for Wholesale (the
+ * only store older app versions know about); an unknown value is refused, never mapped to some other store.
+ */
+export function requestedStoreId(req: Request): string {
+  const raw = req.headers.get(STORE_HEADER)?.trim();
+  if (!raw) return DEFAULT_STORE_ID;
+  if (!isStoreId(raw)) throw new HttpError(400, "Cửa hàng không hợp lệ.");
+  return raw;
 }
 
 /**
@@ -41,10 +55,11 @@ export async function authenticate(req: Request): Promise<AuthedUser> {
     throw new HttpError(401, "Phiên đăng nhập đã hết hạn — hãy đăng nhập lại.");
   }
   const email = (decoded.email ?? "").toLowerCase();
-  const storeId = currentStoreId();
+  const storeId = requestedStoreId(req);
   if (!email || !(await isMember(getAdminDb(), decoded.uid, storeId))) {
     throw new HttpError(403, "Tài khoản này chưa được cấp quyền truy cập cửa hàng.");
   }
 
   return { uid: decoded.uid, email, storeId };
 }
+
