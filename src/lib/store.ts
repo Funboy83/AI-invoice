@@ -357,6 +357,12 @@ export async function getInvoicesForCustomer(customerId: string): Promise<Invoic
   return snap.docs.map((d) => hydrateInvoice(d.id, d.data())).sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/** Live version of getInvoicesForCustomer (the customer page). Same single-field equality query, so no composite index. */
+export function watchInvoicesForCustomer(customerId: string, cb: (invoices: Invoice[]) => void, onError?: (err: unknown) => void) {
+  const q = query(invoicesCol, where("customerId", "==", customerId));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => hydrateInvoice(d.id, d.data())).sort((a, b) => b.createdAt - a.createdAt)), onError);
+}
+
 export async function getInvoiceByNumber(number: string): Promise<Invoice | null> {
   const invoices = await getAllInvoices();
   return invoices.find((i) => i.invoiceNumber.toLowerCase() === number.toLowerCase()) ?? null;

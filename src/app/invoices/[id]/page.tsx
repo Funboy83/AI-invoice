@@ -26,6 +26,9 @@ export default function InvoiceDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Opened from a customer page (?back=/customers/…): Back returns there. Only that in-app path is honored.
+  const backParam = searchParams.get("back");
+  const backHref = backParam && /^\/customers\/[^/?#]+$/.test(backParam) ? backParam : "/invoices";
   const { authedFetch, notifyPossibleRevocation } = useAppAuth();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
@@ -198,7 +201,7 @@ export default function InvoiceDetailPage() {
     <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6 pb-24 md:pb-8 print:p-0">
       <div className="flex items-center justify-between print:hidden">
         <button
-          onClick={() => router.push("/invoices")}
+          onClick={() => router.push(backHref)}
           className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"
         >
           <ArrowLeft size={15} /> Back
