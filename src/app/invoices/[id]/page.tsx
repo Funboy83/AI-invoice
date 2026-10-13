@@ -12,7 +12,7 @@ import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign, AlertTriangle, Fi
 import SearchCombobox from "@/components/SearchCombobox";
 import DeliveryBadge from "@/components/DeliveryBadge";
 
-const COMPANY_NAME = process.env.NEXT_PUBLIC_COMPANY_NAME || "Company Name";
+const COMPANY_NAME = process.env.NEXT_PUBLIC_COMPANY_NAME || "Ngan";
 
 const statusStyles: Record<string, string> = {
   draft: "bg-slate-100 text-slate-600",
