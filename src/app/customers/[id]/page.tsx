@@ -3,14 +3,15 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { watchCustomers, watchInvoicesForCustomer } from "@/lib/store";
+import { watchCustomers, watchInvoicesForCustomer, watchPaymentsForCustomer } from "@/lib/store";
 import { daysSince, summarizeCustomerInvoices } from "@/lib/customerInvoices";
 import CustomerFormModal from "@/components/CustomerFormModal";
 import CustomerPaymentModal from "@/components/CustomerPaymentModal";
+import PaymentHistory from "@/components/PaymentHistory";
 import DeliveryBadge from "@/components/DeliveryBadge";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
-import type { Customer, Invoice } from "@/lib/types";
+import type { Customer, Invoice, Payment } from "@/lib/types";
 import { ArrowLeft, Pencil, Phone, ChevronRight, DollarSign } from "lucide-react";
 
 type Tab = "unpaid" | "paid" | "all";
@@ -24,15 +25,18 @@ export default function CustomerDetailPage() {
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [tab, setTab] = useState<Tab>("unpaid");
   const [editing, setEditing] = useState(false);
-  const [paying, setPaying] = useState(false);
+  const [paying, setPaying] = useState<"payment" | "adjustment" | null>(null);
+  const [payments, setPayments] = useState<Payment[]>([]);
 
   useEffect(() => {
     const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
     const u1 = watchCustomers(setCustomers, onErr);
     const u2 = watchInvoicesForCustomer(id, setInvoices, onErr);
+    const u3 = watchPaymentsForCustomer(id, setPayments, onErr);
     return () => {
       u1();
       u2();
+      u3();
     };
   }, [id, notifyPossibleRevocation]);
 
@@ -125,12 +129,21 @@ export default function CustomerDetailPage() {
         <SummaryCard label="Total paid" value={`$${summary.totalPaid.toFixed(2)}`} sub={`${summary.paid.length} fully paid`} />
       </div>
 
-      <button
-        onClick={() => setPaying(true)}
-        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white hover:bg-emerald-700 active:bg-emerald-800"
-      >
-        <DollarSign size={18} /> Record payment
-      </button>
+      <div className="flex gap-2">
+        <button
+          onClick={() => setPaying("payment")}
+          className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white hover:bg-emerald-700 active:bg-emerald-800"
+        >
+          <DollarSign size={18} /> Record payment
+        </button>
+        <button
+          onClick={() => setPaying("adjustment")}
+          disabled={summary.totalOwed <= 0}
+          className="shrink-0 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-40"
+        >
+          Adjust debt
+        </button>
+      </div>
 
       {/* Unpaid / Paid / All */}
       <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm font-medium">
@@ -185,8 +198,10 @@ export default function CustomerDetailPage() {
         )}
       </div>
 
+      <PaymentHistory payments={payments} invoices={summary.all} customer={customer} />
+
       {editing && <CustomerFormModal customer={customer} onClose={() => setEditing(false)} />}
-      {paying && <CustomerPaymentModal customer={customer} invoices={summary.unpaid} totalOwed={summary.totalOwed} onClose={() => setPaying(false)} />}
+      {paying && <CustomerPaymentModal customer={customer} invoices={summary.unpaid} totalOwed={summary.totalOwed} mode={paying} onClose={() => setPaying(null)} />}
     </div>
   );
 }

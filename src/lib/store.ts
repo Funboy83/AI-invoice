@@ -581,6 +581,12 @@ export async function getPaymentsForInvoice(invoiceId: string): Promise<Payment[
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/** Live list of one customer's payments (including cancelled and edited ones, for the visible history), newest first. */
+export function watchPaymentsForCustomer(customerId: string, cb: (payments: Payment[]) => void, onError?: (err: unknown) => void) {
+  const q = query(paymentsCol, where("customerId", "==", customerId));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Payment).sort((a, b) => b.createdAt - a.createdAt)), onError);
+}
+
 export async function getAllPayments(): Promise<Payment[]> {
   const snap = await getDocs(paymentsCol);
   return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Payment)).sort((a, b) => b.createdAt - a.createdAt);

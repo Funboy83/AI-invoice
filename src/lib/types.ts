@@ -105,6 +105,27 @@ export interface Payment {
   receiptId?: string;
   /** True on the row for the part of a customer payment no open invoice needed (kept as customer credit; invoiceId is ""). */
   unallocated?: boolean;
+  /** "adjustment" = debt lowered by hand (not money received); absent = a normal payment. */
+  kind?: "payment" | "adjustment";
+  /** Why a debt adjustment was made (required for kind "adjustment"). */
+  reason?: string;
+  /** Email of whoever entered it, when known. */
+  by?: string;
+  /** Cancelled payments are kept (never deleted) and no longer count: their amount was taken back off the invoice. */
+  cancelled?: boolean;
+  /** Every edit/cancel of this payment, oldest first — the visible audit trail. */
+  history?: PaymentChange[];
+}
+
+export interface PaymentChange {
+  action: "edit" | "cancel";
+  at: number;
+  actor: LogActor;
+  by?: string;
+  reason: string;
+  amountBefore: number;
+  /** New amount after an edit; 0 for a cancel. */
+  amountAfter: number;
 }
 
 export interface InvoiceLog {

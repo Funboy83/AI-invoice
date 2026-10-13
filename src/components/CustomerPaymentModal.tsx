@@ -15,26 +15,49 @@ import { X } from "lucide-react";
  * is shown after saving. Render only while open: each mount is one payment, so its operationId stays the same
  * across retries of THIS payment (a lost-response retry can't pay twice) and is fresh for the next one.
  */
-export default function CustomerPaymentModal({ customer, invoices, totalOwed, onClose }: { customer: Customer; invoices: Invoice[]; totalOwed: number; onClose: () => void }) {
+export default function CustomerPaymentModal({
+  customer,
+  invoices,
+  totalOwed,
+  mode = "payment",
+  onClose,
+}: {
+  customer: Customer;
+  invoices: Invoice[];
+  totalOwed: number;
+  /** "adjustment": lower the debt by hand (not money received) — reason required, never more than owed, confirm tap. */
+  mode?: "payment" | "adjustment";
+  onClose: () => void;
+}) {
+  const adjusting = mode === "adjustment";
   const { authedFetch } = useAppAuth();
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("");
   const [note, setNote] = useState("");
+  const [reason, setReason] = useState("");
+  const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState<CustomerPaymentResponse | null>(null);
   const [operationId] = useState(newOperationId);
 
   const value = Number(amount);
-  const valid = amount !== "" && Number.isFinite(value) && value > 0;
-  const preview = useMemo(() => (valid ? allocatePaymentOldestFirst(invoices, value) : null), [invoices, valid, value]);
+  const preview = useMemo(() => (amount !== "" && Number.isFinite(value) && value > 0 ? allocatePaymentOldestFirst(invoices, value) : null), [amount, invoices, value]);
+  const tooMuch = adjusting && !!preview && preview.leftover > 0;
+  const valid = !!preview && !tooMuch && (!adjusting || reason.trim() !== "");
 
   async function submit() {
     if (!valid) return;
+    if (adjusting && !confirming) {
+      setConfirming(true);
+      return;
+    }
     setSaving(true);
     setError("");
     try {
-      setSaved(await recordCustomerPaymentApi(authedFetch, customer.id, { amount: value, method: method.trim() || undefined, note: note.trim() || undefined }, operationId));
+      setSaved(await recordCustomerPaymentApi(authedFetch, customer.id, adjusting
+          ? { amount: value, kind: "adjustment", reason: reason.trim() }
+          : { amount: value, method: method.trim() || undefined, note: note.trim() || undefined }, operationId));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to record payment.");
     } finally {
@@ -49,7 +72,7 @@ export default function CustomerPaymentModal({ customer, invoices, totalOwed, on
       <div className="w-full md:max-w-md max-h-[90vh] overflow-y-auto rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between mb-4">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">{saved ? "Payment saved" : "Record payment"}</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{saved ? (adjusting ? "Debt adjusted" : "Payment saved") : adjusting ? "Adjust debt" : "Record payment"}</h2>
             <p className="text-xs text-slate-500 mt-0.5">
               {customer.name} · owes ${totalOwed.toFixed(2)}
             </p>
@@ -59,10 +82,17 @@ export default function CustomerPaymentModal({ customer, invoices, totalOwed, on
           </button>
         </div>
 
+        {!saved && adjusting && (
+          <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            Lowers what {customer.name} owes without counting it as money received (for example a small amount you forgive). It is logged with
+            your reason. To fix a payment entered wrong, use Fix on that payment in Payment history instead.
+          </p>
+        )}
+
         {!saved && (
           <div className="space-y-3">
             <div>
-              <label className="text-xs font-medium text-slate-600">Amount received</label>
+              <label className="text-xs font-medium text-slate-600">{adjusting ? "Lower the debt by" : "Amount received"}</label>
               <div className="mt-1 flex gap-2">
                 <input
                   type="number"
@@ -71,10 +101,13 @@ export default function CustomerPaymentModal({ customer, invoices, totalOwed, on
                   autoFocus
                   className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2.5 text-base"
                   value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
+                  onChange={(e) => {
+                    setAmount(e.target.value);
+                    setConfirming(false);
+                  }}
                   placeholder="0.00"
                 />
-                {totalOwed > 0 && (
+                {totalOwed > 0 && !adjusting && (
                   <button
                     type="button"
                     onClick={() => setAmount(totalOwed.toFixed(2))}
@@ -85,6 +118,21 @@ export default function CustomerPaymentModal({ customer, invoices, totalOwed, on
                 )}
               </div>
             </div>
+            {adjusting ? (
+              <div>
+                <label className="text-xs font-medium text-slate-600">Reason (required)</label>
+                <input
+                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base"
+                  value={reason}
+                  onChange={(e) => {
+                    setReason(e.target.value);
+                    setConfirming(false);
+                  }}
+                  placeholder="e.g. forgave rounding, damaged item"
+                />
+              </div>
+            ) : (
+              <>
             <div>
               <label className="text-xs font-medium text-slate-600">Method (optional)</label>
               <input
@@ -98,6 +146,8 @@ export default function CustomerPaymentModal({ customer, invoices, totalOwed, on
               <label className="text-xs font-medium text-slate-600">Note (optional)</label>
               <input className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base" value={note} onChange={(e) => setNote(e.target.value)} />
             </div>
+              </>
+            )}
           </div>
         )}
 
@@ -127,6 +177,10 @@ export default function CustomerPaymentModal({ customer, invoices, totalOwed, on
           </div>
         )}
 
+        {tooMuch && !saved && <p className="mt-3 text-sm text-red-600">That is more than {customer.name} owes (${totalOwed.toFixed(2)}).</p>}
+        {confirming && !saved && (
+          <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">Check the list above, then tap Confirm to save this adjustment.</p>
+        )}
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
 
         <div className="mt-5 flex justify-end gap-2">
@@ -142,9 +196,9 @@ export default function CustomerPaymentModal({ customer, invoices, totalOwed, on
               <button
                 onClick={submit}
                 disabled={saving || !valid}
-                className="rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+                className={`rounded-lg px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50 ${adjusting ? "bg-amber-600 hover:bg-amber-700" : "bg-emerald-600 hover:bg-emerald-700"}`}
               >
-                {saving ? "Saving…" : valid ? `Record $${value.toFixed(2)}` : "Record"}
+                {saving ? "Saving…" : adjusting ? (confirming ? `Confirm −$${value.toFixed(2)}` : "Review") : valid ? `Record $${value.toFixed(2)}` : "Record"}
               </button>
             </>
           )}

@@ -6,6 +6,7 @@ import {
   createInvoice,
   recordPayment,
   recordCustomerPayment,
+  changePayment,
   updateInvoiceWithLog,
   createProduct,
   updateProduct,
@@ -557,5 +558,118 @@ describe("recordCustomerPayment — one payment split across a customer's invoic
     }
     expect(store.count("payments")).toBe(0);
     expect(await owed()).toBe(100);
+  });
+});
+
+describe("changePayment — edit or cancel a payment entered wrong (never deleted, always logged)", () => {
+  const seed = async (total: number, op: string, customerId = "c1") => {
+    const inv = await createInvoice({ ...base, customerId, items: [line({ quantity: 1, price: total, lineTotal: total })], status: "unpaid", createdBy: "user", actor: "user", operationId: op });
+    return inv;
+  };
+  const payId = () => store.list("payments")[0][0];
+
+  beforeEach(() => {
+    store.put("customers/c1", { name: "Hoa Lee", aliases: [], active: true });
+  });
+
+  it("edit down: invoice balance and tag recalculate, payment keeps its id, history records who/why/before/after", async () => {
+    const inv = await seed(100, "s1");
+    await recordPayment({ invoiceId: inv.id, amount: 100, actor: "user", operationId: "p1" });
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ paymentStatus: "paid" });
+    const id = payId();
+    await changePayment({ paymentId: id, action: "edit", amount: 10, reason: "typed 100 instead of 10", actor: "user", by: "wife@example.com" });
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 10, balance: 90, paymentStatus: "partial" });
+    const pay = store.read(`payments/${id}`)!;
+    expect(pay.amount).toBe(10);
+    expect(pay.history).toEqual([expect.objectContaining({ action: "edit", amountBefore: 100, amountAfter: 10, reason: "typed 100 instead of 10", by: "wife@example.com" })]);
+    expect(store.list("invoiceLogs").filter(([, l]) => l.action === "payment_edit")).toHaveLength(1);
+    expect((await getCustomerDebt("c1")).balance).toBe(90);
+  });
+
+  it("edit up to exactly the total marks it paid; beyond the total is refused with no write", async () => {
+    const inv = await seed(100, "s1");
+    await recordPayment({ invoiceId: inv.id, amount: 40, actor: "user" });
+    const id = payId();
+    await expect(changePayment({ paymentId: id, action: "edit", amount: 120, reason: "x", actor: "user" })).rejects.toBeInstanceOf(ValidationError);
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 40 });
+    await changePayment({ paymentId: id, action: "edit", amount: 100, reason: "they paid all", actor: "user" });
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 100, balance: 0, paymentStatus: "paid" });
+  });
+
+  it("cancel: payment kept and marked cancelled, money goes back onto the invoice, tag back to Unpaid; cannot be changed again", async () => {
+    const inv = await seed(100, "s1");
+    await recordPayment({ invoiceId: inv.id, amount: 100, actor: "user" });
+    const id = payId();
+    await changePayment({ paymentId: id, action: "cancel", reason: "check bounced", actor: "user" });
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 0, balance: 100, paymentStatus: "unpaid" });
+    expect(store.read(`payments/${id}`)).toMatchObject({ cancelled: true, amount: 100 });
+    expect(store.count("payments")).toBe(1);
+    await expect(changePayment({ paymentId: id, action: "cancel", reason: "again", actor: "user" })).rejects.toBeInstanceOf(ValidationError);
+    await expect(changePayment({ paymentId: id, action: "edit", amount: 5, reason: "again", actor: "user" })).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it("the credit part of an overpayment: edit/cancel moves customer credit, never below zero", async () => {
+    await seed(100, "s1");
+    await recordCustomerPayment({ customerId: "c1", amount: 130, actor: "user" });
+    const creditRow = store.list("payments").find(([, p]) => p.unallocated)![0];
+    await changePayment({ paymentId: creditRow, action: "edit", amount: 10, reason: "was 110 not 130", actor: "user" });
+    expect(store.read("customers/c1")).toMatchObject({ credit: 10 });
+    await changePayment({ paymentId: creditRow, action: "cancel", reason: "no extra", actor: "user" });
+    expect(store.read("customers/c1")).toMatchObject({ credit: 0 });
+  });
+
+  it("requires a reason, a positive amount for edits, and an existing payment — no write otherwise", async () => {
+    const inv = await seed(100, "s1");
+    await recordPayment({ invoiceId: inv.id, amount: 40, actor: "user" });
+    const id = payId();
+    await expect(changePayment({ paymentId: id, action: "edit", amount: 30, reason: "  ", actor: "user" })).rejects.toBeInstanceOf(ValidationError);
+    await expect(changePayment({ paymentId: id, action: "edit", amount: 0, reason: "x", actor: "user" })).rejects.toBeInstanceOf(ValidationError);
+    await expect(changePayment({ paymentId: id, action: "edit", amount: 40, reason: "same", actor: "user" })).rejects.toBeInstanceOf(ValidationError);
+    await expect(changePayment({ paymentId: "nope", action: "cancel", reason: "x", actor: "user" })).rejects.toBeInstanceOf(NotFoundError);
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 40 });
+    expect(store.read(`payments/${id}`)).not.toHaveProperty("history");
+  });
+
+  it("a replayed operationId applies the edit once", async () => {
+    const inv = await seed(100, "s1");
+    await recordPayment({ invoiceId: inv.id, amount: 40, actor: "user" });
+    const id = payId();
+    const edit = () => changePayment({ paymentId: id, action: "edit", amount: 30, reason: "fix", actor: "user", operationId: "fix-1" });
+    await edit();
+    await edit();
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 30 });
+    expect((store.read(`payments/${id}`)!.history as unknown[]).length).toBe(1);
+  });
+
+  it("a voided invoice stays void when its payment is cancelled", async () => {
+    const inv = await seed(100, "s1");
+    await recordPayment({ invoiceId: inv.id, amount: 40, actor: "user" });
+    store.put(`invoices/${inv.id}`, { ...store.read(`invoices/${inv.id}`)!, paymentStatus: "void" });
+    await changePayment({ paymentId: payId(), action: "cancel", reason: "refund", actor: "user" });
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 0, paymentStatus: "void" });
+  });
+});
+
+describe("debt adjustment (recordCustomerPayment kind: adjustment)", () => {
+  beforeEach(() => {
+    store.put("customers/c1", { name: "Hoa Lee", aliases: [], active: true });
+  });
+  const seed = (total: number, op: string) =>
+    createInvoice({ ...base, customerId: "c1", items: [line({ quantity: 1, price: total, lineTotal: total })], status: "unpaid", createdBy: "user", actor: "user", operationId: op });
+
+  it("lowers the debt oldest first, marked as an adjustment with its reason and logged", async () => {
+    const inv = await seed(100.03, "s1");
+    await recordCustomerPayment({ customerId: "c1", amount: 0.03, kind: "adjustment", reason: "rounding", actor: "user", by: "wife@example.com" });
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ balance: 100, paymentStatus: "partial" });
+    expect(store.list("payments")[0][1]).toMatchObject({ kind: "adjustment", reason: "rounding", amount: 0.03, by: "wife@example.com" });
+    expect(store.list("invoiceLogs").filter(([, l]) => l.action === "adjustment")).toHaveLength(1);
+  });
+
+  it("needs a reason and can never exceed what is owed (no credit from an adjustment)", async () => {
+    await seed(50, "s1");
+    await expect(recordCustomerPayment({ customerId: "c1", amount: 5, kind: "adjustment", actor: "user" })).rejects.toBeInstanceOf(ValidationError);
+    await expect(recordCustomerPayment({ customerId: "c1", amount: 60, kind: "adjustment", reason: "x", actor: "user" })).rejects.toBeInstanceOf(ValidationError);
+    expect(store.count("payments")).toBe(0);
+    expect(store.read("customers/c1")).not.toHaveProperty("credit");
   });
 });

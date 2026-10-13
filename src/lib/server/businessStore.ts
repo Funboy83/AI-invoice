@@ -1,6 +1,6 @@
 import { FieldPath, Timestamp, type DocumentReference, type Firestore, type Transaction } from "firebase-admin/firestore";
 import { getAdminDb } from "./firebaseAdmin";
-import { DomainError, NotFoundError, OperationConflictError } from "@/lib/domainErrors";
+import { DomainError, NotFoundError, OperationConflictError, ValidationError } from "@/lib/domainErrors";
 import { assertFiniteAmount, assertFiniteTotals, assertNonNegativeAmount, assertPositiveAmount, calcTotals, computePaymentStatus, invoiceItemsForWrite, sanitizeInvoiceItems } from "@/lib/invoiceMath";
 import { allocatePaymentOldestFirst, type PaymentAllocation } from "@/lib/paymentAllocation";
 import { isCommittedStatus, isOpenDelivery, type Customer, type CustomInvoiceDefaults, type InvoicePrintInfo, type PrintParty, type DeliveryInfo, type Invoice, type InvoiceLineItem, type InvoiceLog, type InvoiceStatus, type LogActor, type Payment, type Product } from "@/lib/types";
@@ -588,6 +588,7 @@ export async function recordPayment(input: {
   method?: string;
   note?: string;
   actor: LogActor;
+  by?: string;
   operationId?: string;
 }): Promise<{ invoice: Invoice; payment: Payment; stockWarnings?: string[] }> {
   assertPositiveAmount(input.amount, "amount");
@@ -626,6 +627,7 @@ export async function recordPayment(input: {
       note: input.note ?? "",
       createdAt: now,
       actor: input.actor,
+      ...(input.by ? { by: input.by } : {}),
     };
     tx.set(paymentRef, paymentPayload);
     tx.set(logRef, {
@@ -674,17 +676,23 @@ export async function recordCustomerPayment(input: {
   amount: number;
   method?: string;
   note?: string;
+  /** "adjustment": lowers the debt by hand (not money received) — needs a reason, and can never exceed what is owed. */
+  kind?: "payment" | "adjustment";
+  reason?: string;
   actor: LogActor;
+  by?: string;
   operationId?: string;
 }): Promise<CustomerPaymentResult> {
   assertPositiveAmount(input.amount, "amount");
+  const isAdjustment = input.kind === "adjustment";
+  if (isAdjustment && !input.reason?.trim()) throw new ValidationError("A reason is required to adjust a customer's debt.");
   const customerRef = customersCol().doc(input.customerId);
   // Which invoices belong to the customer is looked up first; every one is then re-read INSIDE the transaction,
   // so the amounts the split uses are the committed ones, never a stale copy.
   const invoiceRefs = (await invoicesCol().where("customerId", "==", input.customerId).get()).docs.map((d) => d.ref);
   const receiptId = paymentsCol().doc().id;
 
-  const fingerprint = { customerId: input.customerId, amount: input.amount, method: input.method, note: input.note };
+  const fingerprint = { customerId: input.customerId, amount: input.amount, method: input.method, note: input.note, kind: input.kind, reason: input.reason };
   return runOnce(input.operationId, "recordCustomerPayment", fingerprint, async (tx) => {
     const customerSnap = await tx.get(customerRef);
     if (!customerSnap.exists) throw new NotFoundError("Customer not found");
@@ -696,11 +704,23 @@ export async function recordCustomerPayment(input: {
       .filter((i) => i.customerId === input.customerId);
     const byId = new Map(open.map((i) => [i.id, i]));
     const { allocations, leftover } = allocatePaymentOldestFirst(open, input.amount);
+    if (isAdjustment && leftover > 0) {
+      throw new ValidationError(`An adjustment can only lower what is owed ($${(input.amount - leftover).toFixed(2)} right now), not create credit.`);
+    }
     const now = Date.now();
 
     const invoices: Invoice[] = [];
     const payments: Payment[] = [];
-    const base = { customerId: input.customerId, method: input.method ?? "", note: input.note ?? "", createdAt: now, actor: input.actor, receiptId };
+    const base = {
+      customerId: input.customerId,
+      method: input.method ?? "",
+      note: input.note ?? "",
+      createdAt: now,
+      actor: input.actor,
+      receiptId,
+      ...(input.by ? { by: input.by } : {}),
+      ...(isAdjustment ? { kind: "adjustment" as const, reason: input.reason!.trim() } : {}),
+    };
     for (const a of allocations) {
       const before = byId.get(a.invoiceId)!;
       const amountPaid = Math.round((before.amountPaid + a.amount) * 100) / 100;
@@ -714,8 +734,10 @@ export async function recordCustomerPayment(input: {
         invoiceId: a.invoiceId,
         timestamp: now,
         actor: input.actor,
-        action: "payment",
-        message: `Payment of $${a.amount.toFixed(2)} recorded from a $${input.amount.toFixed(2)} customer payment, oldest invoice first (balance now $${balance.toFixed(2)})`,
+        action: isAdjustment ? "adjustment" : "payment",
+        message: isAdjustment
+          ? `Debt adjusted by -$${a.amount.toFixed(2)} (reason: ${input.reason!.trim()}), oldest invoice first (balance now $${balance.toFixed(2)})`
+          : `Payment of $${a.amount.toFixed(2)} recorded from a $${input.amount.toFixed(2)} customer payment, oldest invoice first (balance now $${balance.toFixed(2)})`,
         before: { amountPaid: before.amountPaid, balance: before.balance },
         after: { amountPaid, balance },
         ...(input.operationId ? { operationId: input.operationId } : {}),
@@ -736,6 +758,98 @@ export async function recordCustomerPayment(input: {
 
     return { receiptId, amount: input.amount, allocations, leftover, credit, invoices, payments };
   });
+}
+
+/**
+ * Fixes a payment entered with the wrong amount ("edit") or takes it back entirely ("cancel") — the "dangerous but
+ * necessary" debt correction. Nothing is ever deleted: the payment row keeps its id, an edit changes `amount`, a
+ * cancel marks it `cancelled` (amount kept for the record), and every change is appended to the row's `history`
+ * (who, when, before → after, reason) plus an audit log on the invoice. In the SAME transaction the difference is
+ * applied where the money went: the invoice's amountPaid/balance/status, or the customer's credit for the extra
+ * part of a customer payment. Refused when the result would make no sense (paying an invoice beyond its total,
+ * credit below zero, a cancelled payment changed again).
+ */
+export async function changePayment(input: {
+  paymentId: string;
+  action: "edit" | "cancel";
+  /** New amount, required for "edit". */
+  amount?: number;
+  reason: string;
+  actor: LogActor;
+  by?: string;
+  operationId?: string;
+}): Promise<{ payment: Payment; invoice?: Invoice; credit?: number }> {
+  const reason = input.reason?.trim() ?? "";
+  if (!reason) throw new ValidationError("A reason is required to change a payment.");
+  if (input.action === "edit") assertPositiveAmount(input.amount as number, "amount");
+  else if (input.action !== "cancel") throw new ValidationError("Unknown payment change.");
+  const paymentRef = paymentsCol().doc(input.paymentId);
+
+  const fingerprint = { paymentId: input.paymentId, action: input.action, amount: input.amount, reason };
+  return runOnce(input.operationId, "changePayment", fingerprint, async (tx) => {
+    const snap = await tx.get(paymentRef);
+    if (!snap.exists) throw new NotFoundError("Payment not found");
+    const before = { id: snap.id, ...snap.data() } as Payment;
+    if (before.cancelled) throw new ValidationError("This payment was already cancelled.");
+    const newAmount = input.action === "cancel" ? 0 : Math.round((input.amount as number) * 100) / 100;
+    const delta = Math.round((newAmount - before.amount) * 100) / 100;
+    if (input.action === "edit" && delta === 0) throw new ValidationError("The new amount is the same as the old one.");
+    const now = Date.now();
+    const what = before.kind === "adjustment" ? "Debt adjustment" : "Payment";
+    const change = { action: input.action, at: now, actor: input.actor, ...(input.by ? { by: input.by } : {}), reason, amountBefore: before.amount, amountAfter: newAmount };
+
+    let invoice: Invoice | undefined;
+    let credit: number | undefined;
+    if (before.invoiceId) {
+      const invoiceRef = invoicesCol().doc(before.invoiceId);
+      const invSnap = await tx.get(invoiceRef);
+      if (!invSnap.exists) throw new NotFoundError("The invoice this payment belongs to was not found.");
+      const inv = hydrateInvoice(invSnap.id, invSnap.data()!);
+      const amountPaid = Math.round((inv.amountPaid + delta) * 100) / 100;
+      if (amountPaid < 0) throw new ValidationError(`Invoice #${inv.invoiceNumber} shows less paid than this payment — please check its payments first.`);
+      if (delta > 0 && amountPaid > inv.total) {
+        throw new ValidationError(`That would pay invoice #${inv.invoiceNumber} more than its total ($${inv.total.toFixed(2)}). Record the extra as a new customer payment instead.`);
+      }
+      const balance = Math.round((inv.total - amountPaid) * 100) / 100;
+      const paymentStatus = computePaymentStatus(inv.total, amountPaid, inv.paymentStatus);
+      tx.update(invoiceRef, { amountPaid, balance, paymentStatus, updatedAt: now });
+      tx.set(logsCol().doc(), {
+        invoiceId: inv.id,
+        timestamp: now,
+        actor: input.actor,
+        action: input.action === "cancel" ? "payment_cancel" : "payment_edit",
+        message:
+          input.action === "cancel"
+            ? `${what} of $${before.amount.toFixed(2)} cancelled (reason: ${reason}) — balance now $${balance.toFixed(2)}`
+            : `${what} changed from $${before.amount.toFixed(2)} to $${newAmount.toFixed(2)} (reason: ${reason}) — balance now $${balance.toFixed(2)}`,
+        before: { amountPaid: inv.amountPaid, balance: inv.balance },
+        after: { amountPaid, balance },
+        ...(input.operationId ? { operationId: input.operationId } : {}),
+      });
+      invoice = { ...inv, amountPaid, balance, paymentStatus, updatedAt: now };
+    } else {
+      if (!before.customerId) throw new ValidationError("This payment is not linked to an invoice or a customer.");
+      const customerRef = customersCol().doc(before.customerId);
+      const custSnap = await tx.get(customerRef);
+      if (!custSnap.exists) throw new NotFoundError("Customer not found");
+      const creditBefore = hydrateCustomer(custSnap.id, custSnap.data()!).credit ?? 0;
+      credit = Math.round((creditBefore + delta) * 100) / 100;
+      if (credit < 0) throw new ValidationError(`The customer only has $${creditBefore.toFixed(2)} credit left, so this cannot be lowered that much.`);
+      tx.update(customerRef, { credit, updatedAt: now });
+    }
+
+    const updated = {
+      ...(input.action === "cancel" ? { cancelled: true } : { amount: newAmount }),
+      history: [...(before.history ?? []), change],
+    };
+    tx.update(paymentRef, updated);
+    return { payment: { ...before, ...updated }, ...(invoice ? { invoice } : {}), ...(credit !== undefined ? { credit } : {}) };
+  });
+}
+
+export async function getPaymentsForCustomer(customerId: string): Promise<Payment[]> {
+  const snap = await paymentsCol().where("customerId", "==", customerId).get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Payment).sort((a, b) => b.createdAt - a.createdAt);
 }
 
 export async function getPaymentsForInvoice(invoiceId: string): Promise<Payment[]> {

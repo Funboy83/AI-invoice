@@ -7,10 +7,10 @@ import { ValidationError } from "@/lib/domainErrors";
 
 export const runtime = "nodejs";
 
-/** Customer payment (the customer page's "Record payment"): split across their open invoices, oldest first. */
+/** Customer payment or debt adjustment (customer page "Record payment" / "Adjust debt"): split across their open invoices, oldest first. */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await authenticate(req);
+    const user = await authenticate(req);
     const { id } = await params;
     if (!id) throw new ValidationError("Thiếu id khách hàng.");
     const body = await req.json().catch(() => ({}));
@@ -19,7 +19,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       amount: requirePositive(body.amount, "Số tiền thanh toán"),
       method: optionalString(body.method, "Phương thức", 100),
       note: optionalString(body.note, "Ghi chú"),
+      kind: body.kind === "adjustment" ? "adjustment" : "payment",
+      reason: optionalString(body.reason, "Lý do"),
       actor: "user",
+      by: user.email,
       operationId: optionalOperationId(body.operationId),
     });
     return NextResponse.json(result, { status: 201 });

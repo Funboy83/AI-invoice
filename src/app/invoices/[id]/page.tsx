@@ -585,8 +585,11 @@ export default function InvoiceDetailPage() {
               <div key={p.id} className="flex justify-between text-sm">
                 <span className="text-slate-600">
                   {new Date(p.createdAt).toLocaleDateString()} {p.method ? `· ${p.method}` : ""}
+                  {p.kind === "adjustment" && " · adjustment"}
+                  {p.cancelled && <span className="ml-1 font-medium text-red-600">· cancelled</span>}
+                  {!p.cancelled && (p.history?.length ?? 0) > 0 && <span className="ml-1 text-indigo-600">· edited</span>}
                 </span>
-                <span className="font-medium text-slate-900">${p.amount.toFixed(2)}</span>
+                <span className={`font-medium ${p.cancelled ? "text-slate-400 line-through" : "text-slate-900"}`}>${p.amount.toFixed(2)}</span>
               </div>
             ))}
           </div>

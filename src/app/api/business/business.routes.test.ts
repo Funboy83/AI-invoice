@@ -310,6 +310,25 @@ describe("POST /api/business/customers/[id]/payments", () => {
   });
 });
 
+describe("PATCH /api/business/payments/[id]", () => {
+  it("edits with a reason, records who did it, and rejects a missing reason or bad action with no write", async () => {
+    const item = { productId: "p1", productName: "Milo", quantity: 1, unit: "u", price: 100, lineTotal: 100 };
+    const inv = await createInvoice({ customerName: "Hoa Lee", items: [item], status: "unpaid", createdBy: "user", actor: "user", operationId: "seed-fix" });
+    const { POST } = await import("./invoices/[id]/payments/route");
+    await POST(post(`/api/business/invoices/${inv.id}/payments`, { amount: 100 }), { params: Promise.resolve({ id: inv.id }) });
+    const payId = store.list("payments")[0][0];
+    const { PATCH } = await import("./payments/[id]/route");
+    const params = { params: Promise.resolve({ id: payId }) };
+    expect((await PATCH(patch(`/api/business/payments/${payId}`, { action: "edit", amount: 10 }), params)).status).toBe(400);
+    expect((await PATCH(patch(`/api/business/payments/${payId}`, { action: "delete", reason: "x" }), params)).status).toBe(400);
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 100 });
+    const ok = await PATCH(patch(`/api/business/payments/${payId}`, { action: "edit", amount: 10, reason: "typo", by: "attacker@example.com" }), params);
+    expect(ok.status).toBe(200);
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 10, paymentStatus: "partial" });
+    expect(store.read(`payments/${payId}`)!.history).toEqual([expect.objectContaining({ by: MEMBER.email, reason: "typo" })]);
+  });
+});
+
 describe("B1 (route level) — the exact client retry shape: same stable operationId across a lost-response retry", () => {
   it("POST /invoices twice with the SAME operationId (what businessApi.ts + useActionId now send on retry): exactly one invoice", async () => {
     const { POST } = await import("./invoices/route");

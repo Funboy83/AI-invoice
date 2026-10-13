@@ -120,10 +120,20 @@ export interface CustomerPaymentResponse {
 export async function recordCustomerPaymentApi(
   authedFetch: AuthedFetch,
   customerId: string,
-  input: { amount: number; method?: string; note?: string },
+  input: { amount: number; method?: string; note?: string; kind?: "payment" | "adjustment"; reason?: string },
   operationId: string
 ): Promise<CustomerPaymentResponse> {
   return call<CustomerPaymentResponse>(authedFetch, "POST", `/api/business/customers/${customerId}/payments`, { ...input, operationId });
+}
+
+/** Fix a payment's amount ("edit") or take it back ("cancel"). Reason required; the server keeps the full history. */
+export async function changePaymentApi(
+  authedFetch: AuthedFetch,
+  paymentId: string,
+  input: { action: "edit" | "cancel"; amount?: number; reason: string },
+  operationId: string
+): Promise<void> {
+  await call(authedFetch, "PATCH", `/api/business/payments/${paymentId}`, { ...input, operationId });
 }
 
 /* Custom Invoice: print information for an existing invoice, read and saved through the server. */
