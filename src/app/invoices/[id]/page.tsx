@@ -212,7 +212,7 @@ export default function InvoiceDetailPage() {
           </button>
           {!editing && isCommittedStatus(invoice.paymentStatus) && (
             <button
-              onClick={() => router.push(`/custom-invoices?from=${invoice.id}`)}
+              onClick={() => router.push(`/custom-invoices/${invoice.id}`)}
               className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
               <FileStack size={14} /> Custom Invoice

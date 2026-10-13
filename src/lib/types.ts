@@ -129,30 +129,42 @@ export function isInvoiceIncomplete(invoice: Invoice): boolean {
   return invoice.paymentStatus === "draft" && invoice.items.some((it) => it.incomplete);
 }
 
+/** Which Custom Invoice print layout to use: KiotViet-style for big vendors, or a lighter one for small vendors. */
+export type CustomInvoiceTemplate = "professional" | "simple";
+
+export interface PrintParty {
+  name: string;
+  address: string;
+  phone: string;
+  email?: string;
+}
+
 /**
- * A "Custom Invoice": a printable copy of an existing invoice, laid out like the KiotViet-style business invoice
- * (src/app/custom-invoices/[id]/page.tsx). It takes the NEXT number from the same counter as normal invoices, and
- * its customer, items and totals are copied from the source invoice when it is created and never change afterwards.
- * The only editable field is `date`. It lives in its own `customInvoices` collection, so it never counts toward
- * customer debt, stock, payments or the AI's invoice search — the source invoice remains the real sale.
+ * Extra information printed on a Custom Invoice. A Custom Invoice is NOT a separate invoice: it is a different
+ * printout of an existing invoice. Customer, items, prices and totals always come from that invoice and can't be
+ * changed here; this only holds the "information and notes" around them. Stored per invoice (doc id = invoice id)
+ * in `invoicePrintInfo`, so it never affects debt, stock, payments or the invoice itself.
  */
-export interface CustomInvoice {
-  id: string;
-  invoiceNumber: string;
-  /** Calendar date printed on the invoice, "YYYY-MM-DD" (a plain date, so it never shifts with time zones). */
+export interface InvoicePrintInfo {
+  invoiceId: string;
+  template: CustomInvoiceTemplate;
+  /** Your company, printed as the sender. */
+  from: PrintParty;
+  /** Customer's billing address/phone as printed (the customer NAME always comes from the invoice). */
+  billTo: { address: string; phone: string };
+  shipTo: PrintParty;
+  /** "YYYY-MM-DD" dates printed on the invoice; empty string = not shown. */
   date: string;
-  sourceInvoiceId: string;
-  sourceInvoiceNumber: string;
-  customerId?: string;
-  customerName: string;
-  billToAddress?: string;
-  shipToAddress?: string;
-  phone?: string;
-  items: InvoiceLineItem[];
-  shipping: number;
-  discount: number;
-  subtotal: number;
-  total: number;
-  createdAt: number;
+  dueDate: string;
+  deliveryDate: string;
+  po: string;
+  notes: string;
+  terms: string;
   updatedAt: number;
+}
+
+/** Last-used company block and terms, pre-filled on the next Custom Invoice. */
+export interface CustomInvoiceDefaults {
+  from: PrintParty;
+  terms: string;
 }

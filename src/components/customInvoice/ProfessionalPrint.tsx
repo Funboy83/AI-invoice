@@ -1,25 +1,21 @@
-import { formatDateKey } from "@/lib/businessApi";
-import type { CustomInvoice } from "@/lib/types";
-
-const money = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+import { formatDateKey, lines, money, totalQuantity, type PrintProps } from "./shared";
 
 /**
- * Print-only layout for a Custom Invoice, copied from the KiotViet business invoice: INVOICE title and company block,
- * Bill To / Ship To / invoice number and date, STT·CODE·ITEMS NAME·Unit·QTT·Price·Total table, stepped totals, and
- * Terms & Conditions. Hidden on screen. Separate from (and does not change) the normal invoice's print template.
+ * "Professional" Custom Invoice print (for big vendors), copied from the KiotViet business invoice: INVOICE title and
+ * underlined company block, Bill To / Ship To / Invoice / Date / Delivery Date, STT·CODE·ITEMS NAME·Unit·QTT·Price·Total
+ * table, stepped totals, Terms & Conditions. Customer, items and money come straight from the invoice.
  */
-export default function CustomInvoicePrint({ invoice, header, terms }: { invoice: CustomInvoice; header: string; terms: string }) {
-  const totalQty = Math.round(invoice.items.reduce((s, li) => s + li.quantity, 0) * 1000) / 1000;
-  const headerLines = header.split("\n").filter(Boolean);
+export default function ProfessionalPrint({ invoice, info }: PrintProps) {
+  const companyLines = [info.from.name, ...lines(info.from.address), info.from.phone ? `TEL: ${info.from.phone}` : ""].filter(Boolean);
 
   return (
-    <div className="hidden print:block text-black font-[Arial,Helvetica,sans-serif] text-[11px] leading-snug">
+    <div className="text-black font-[Arial,Helvetica,sans-serif] text-[11px] leading-snug">
       <div className="flex items-start justify-between">
         <h1 className="text-[44px] leading-none text-[#1f3a8a] underline decoration-2 underline-offset-4 [font-family:Impact,'Arial_Narrow',sans-serif] [font-stretch:condensed]">
           INVOICE
         </h1>
-        <div className="text-right font-bold underline leading-tight">
-          {headerLines.map((line, i) => (
+        <div className="text-right font-bold underline leading-tight uppercase">
+          {companyLines.map((line, i) => (
             <p key={i} className={i === 0 ? "text-[13px]" : "text-[11px]"}>
               {line}
             </p>
@@ -32,22 +28,39 @@ export default function CustomInvoicePrint({ invoice, header, terms }: { invoice
         <div>
           <p className="font-bold">Bill To:</p>
           <p>{invoice.customerName}</p>
-          {invoice.billToAddress && <p className="whitespace-pre-line">{invoice.billToAddress}</p>}
-          <p>Tel: {invoice.phone ?? ""}</p>
+          {lines(info.billTo.address).map((l, i) => (
+            <p key={i}>{l}</p>
+          ))}
+          <p>Tel: {info.billTo.phone}</p>
         </div>
         <div>
           <p className="font-bold">Ship To:</p>
-          {invoice.shipToAddress && <p className="whitespace-pre-line">{invoice.shipToAddress}</p>}
-          <p className={invoice.shipToAddress ? "" : "mt-[2.6em]"}>Tel:</p>
+          {info.shipTo.name && <p>{info.shipTo.name}</p>}
+          {lines(info.shipTo.address).map((l, i) => (
+            <p key={i}>{l}</p>
+          ))}
+          <p>Tel: {info.shipTo.phone}</p>
         </div>
-        <div className="text-right">
+        <div className="text-right space-y-0.5">
           <p>
             <span className="font-bold">Invoice</span>: {invoice.invoiceNumber}
           </p>
-          <p className="mt-1">
-            <span className="font-bold">Date</span>: {formatDateKey(invoice.date, " / ")}
+          <p>
+            <span className="font-bold">Date</span>: {formatDateKey(info.date, " / ")}
           </p>
-          <p className="mt-2 font-bold">Delivery Date:</p>
+          {info.po && (
+            <p>
+              <span className="font-bold">P.O. #</span>: {info.po}
+            </p>
+          )}
+          {info.dueDate && (
+            <p>
+              <span className="font-bold">Due Date</span>: {formatDateKey(info.dueDate, " / ")}
+            </p>
+          )}
+          <p>
+            <span className="font-bold">Delivery Date:</span> {formatDateKey(info.deliveryDate, " / ")}
+          </p>
         </div>
       </div>
 
@@ -78,10 +91,10 @@ export default function CustomInvoicePrint({ invoice, header, terms }: { invoice
         </tbody>
       </table>
 
-      {/* Totals block: labels indented under the table, values stepped right like the KiotViet print. */}
+      {/* Labels indented under the table, values stepped right like the KiotViet print. */}
       <div className="mt-4 ml-8 grid grid-cols-[1fr_5rem_7rem_7rem] gap-y-1 break-inside-avoid">
         <span>Total Items</span>
-        <span className="text-right">{totalQty}</span>
+        <span className="text-right">{totalQuantity(invoice)}</span>
         <span />
         <span />
         <span>Total Price</span>
@@ -105,11 +118,12 @@ export default function CustomInvoicePrint({ invoice, header, terms }: { invoice
         <span />
         <span className="text-right">{money(invoice.total)}</span>
       </div>
-      <hr className="mt-5 mb-8 border-black/40" />
+      <hr className="mt-5 mb-4 border-black/40" />
 
+      {info.notes && <p className="mb-4 whitespace-pre-line">{info.notes}</p>}
       <div className="text-[8.5px] leading-tight uppercase whitespace-pre-line break-inside-avoid">
         <p className="normal-case">Terms &amp; Conditions</p>
-        {terms}
+        {info.terms}
       </div>
     </div>
   );

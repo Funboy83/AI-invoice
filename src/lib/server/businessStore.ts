@@ -2,7 +2,7 @@ import { FieldPath, Timestamp, type DocumentReference, type Firestore, type Tran
 import { getAdminDb } from "./firebaseAdmin";
 import { DomainError, NotFoundError, OperationConflictError } from "@/lib/domainErrors";
 import { assertFiniteAmount, assertFiniteTotals, assertNonNegativeAmount, assertPositiveAmount, calcTotals, computePaymentStatus, invoiceItemsForWrite, sanitizeInvoiceItems } from "@/lib/invoiceMath";
-import { isCommittedStatus, isOpenDelivery, type Customer, type CustomInvoice, type DeliveryInfo, type Invoice, type InvoiceLineItem, type InvoiceLog, type InvoiceStatus, type LogActor, type Payment, type Product } from "@/lib/types";
+import { isCommittedStatus, isOpenDelivery, type Customer, type CustomInvoiceDefaults, type InvoicePrintInfo, type PrintParty, type DeliveryInfo, type Invoice, type InvoiceLineItem, type InvoiceLog, type InvoiceStatus, type LogActor, type Payment, type Product } from "@/lib/types";
 
 /**
  * Admin-SDK mirror of src/lib/store.ts: same collections, same transactions, same idempotency ledger, same totals
@@ -24,7 +24,8 @@ const paymentsCol = () => db().collection("payments");
 const logsCol = () => db().collection("invoiceLogs");
 const countersCol = () => db().collection("counters");
 const operationsCol = () => db().collection("operations");
-const customInvoicesCol = () => db().collection("customInvoices");
+const printInfoCol = () => db().collection("invoicePrintInfo");
+const settingsCol = () => db().collection("settings");
 
 /**
  * Runs `body` in a transaction idempotent per `operationId` (see store.ts's runOnce for the base contract — same
@@ -672,129 +673,42 @@ export async function getInvoiceLogs(invoiceId: string): Promise<InvoiceLog[]> {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as InvoiceLog).sort((a, b) => b.timestamp - a.timestamp);
 }
 
-/* ----------------------------- Custom invoices ----------------------------- */
+/* ------------------------- Custom invoice print info ------------------------- */
 
-function hydrateCustomInvoice(id: string, data: Record<string, unknown>): CustomInvoice {
-  return {
-    id,
-    invoiceNumber: data.invoiceNumber as string,
-    date: data.date as string,
-    sourceInvoiceId: data.sourceInvoiceId as string,
-    sourceInvoiceNumber: data.sourceInvoiceNumber as string,
-    customerId: (data.customerId as string) || undefined,
-    customerName: data.customerName as string,
-    billToAddress: (data.billToAddress as string) || undefined,
-    shipToAddress: (data.shipToAddress as string) || undefined,
-    phone: (data.phone as string) || undefined,
-    items: (data.items as InvoiceLineItem[]) ?? [],
-    shipping: (data.shipping as number) ?? 0,
-    discount: (data.discount as number) ?? 0,
-    subtotal: data.subtotal as number,
-    total: data.total as number,
-    createdAt: toMillis(data.createdAt),
-    updatedAt: toMillis(data.updatedAt),
-  };
+const DEFAULT_FROM: PrintParty = {
+  name: "N&E ENTERPRISE INC",
+  address: "14902 Moran St, Suite A\nWestminster, CA 92683",
+  phone: "714-233-8888",
+  email: "Nneenterpriseinc@gmail.com",
+};
+
+export async function getCustomInvoiceDefaults(): Promise<CustomInvoiceDefaults> {
+  const snap = await settingsCol().doc("customInvoiceDefaults").get();
+  const data = snap.exists ? (snap.data() as Partial<CustomInvoiceDefaults>) : {};
+  return { from: data.from ?? DEFAULT_FROM, terms: data.terms ?? "" };
 }
 
-export async function getAllCustomInvoices(): Promise<CustomInvoice[]> {
-  const snap = await customInvoicesCol().get();
-  return snap.docs.map((d) => hydrateCustomInvoice(d.id, d.data())).sort((a, b) => b.createdAt - a.createdAt);
-}
-
-export async function getCustomInvoice(id: string): Promise<CustomInvoice | null> {
-  const snap = await customInvoicesCol().doc(id).get();
-  return snap.exists ? hydrateCustomInvoice(snap.id, snap.data()!) : null;
+export async function getInvoicePrintInfo(invoiceId: string): Promise<InvoicePrintInfo | null> {
+  const snap = await printInfoCol().doc(invoiceId).get();
+  return snap.exists ? ({ ...(snap.data() as Omit<InvoicePrintInfo, "invoiceId">), invoiceId }) : null;
 }
 
 /**
- * Creates a Custom Invoice from an existing invoice. The number comes from the SAME counter as normal invoices
- * (allocated in the same transaction as the write, so it is never reused or skipped by a failed save). Customer,
- * items and totals are copied from the source exactly as stored — nothing is recomputed or editable — and the copy
- * goes to `customInvoices`, so it never touches debt, stock, payments or the source invoice itself.
+ * Saves the print information for one invoice (overwrites the previous version) and remembers its company block
+ * and terms as the defaults for the next one. Never reads or writes the invoice itself: the printout's customer,
+ * items and money always come from the live invoice, so nothing here can change a price, a total or a debt.
  */
-export async function createCustomInvoice(input: { sourceInvoiceId: string; date: string; actor: LogActor; operationId?: string }): Promise<CustomInvoice> {
-  const sourceRef = invoicesCol().doc(input.sourceInvoiceId);
-  const counterRef = countersCol().doc("invoiceCounter");
-  const ref = customInvoicesCol().doc();
-  const logRef = logsCol().doc();
-
-  return runOnce(input.operationId, "createCustomInvoice", { sourceInvoiceId: input.sourceInvoiceId, date: input.date }, async (tx) => {
-    const sourceSnap = await tx.get(sourceRef);
-    if (!sourceSnap.exists) throw new NotFoundError("Không tìm thấy hóa đơn gốc.");
-    const source = hydrateInvoice(sourceSnap.id, sourceSnap.data()!);
-    if (!isCommittedStatus(source.paymentStatus)) {
-      throw new DomainError(`Hóa đơn #${source.invoiceNumber} đang là ${source.paymentStatus} — chỉ tạo Custom Invoice từ hóa đơn đã chốt.`);
-    }
-    const customerSnap = source.customerId ? await tx.get(customersCol().doc(source.customerId)) : null;
-    const customer = customerSnap?.exists ? hydrateCustomer(customerSnap.id, customerSnap.data()!) : null;
-    // The CODE column prints each product's barcode; older lines may not carry it, so fill it from the product.
-    const missingCode = [...new Set(source.items.filter((it) => it.productId && !it.barcode).map((it) => it.productId!))];
-    const productSnaps = await Promise.all(missingCode.map((pid) => tx.get(productsCol().doc(pid))));
-    const barcodes = new Map(productSnaps.filter((p) => p.exists && p.data()!.barcode).map((p) => [p.id, p.data()!.barcode as string]));
-    const counterSnap = await tx.get(counterRef);
-
-    const current = counterSnap.exists ? ((counterSnap.data() as { value: number }).value as number) : 1999;
-    const value = current + 1;
-    const invoiceNumber = String(value);
+export async function saveInvoicePrintInfo(info: Omit<InvoicePrintInfo, "updatedAt">): Promise<InvoicePrintInfo> {
+  const invoiceRef = invoicesCol().doc(info.invoiceId);
+  const ref = printInfoCol().doc(info.invoiceId);
+  const defaultsRef = settingsCol().doc("customInvoiceDefaults");
+  return db().runTransaction(async (tx) => {
+    if (!(await tx.get(invoiceRef)).exists) throw new NotFoundError("Không tìm thấy hóa đơn.");
     const now = Date.now();
-    const items = invoiceItemsForWrite(
-      source.items.map((it) => (!it.barcode && it.productId && barcodes.has(it.productId) ? { ...it, barcode: barcodes.get(it.productId) } : it))
-    );
-    tx.set(counterRef, { value }, { merge: true });
-
-    const payload = {
-      invoiceNumber,
-      date: input.date,
-      sourceInvoiceId: source.id,
-      sourceInvoiceNumber: source.invoiceNumber,
-      customerId: source.customerId ?? "",
-      customerName: source.customerName,
-      billToAddress: customer?.address ?? "",
-      shipToAddress: customer?.shippingAddress ?? "",
-      phone: customer?.phone ?? "",
-      items,
-      shipping: source.shipping,
-      discount: source.discount,
-      subtotal: source.subtotal,
-      total: source.total,
-      createdAt: now,
-      updatedAt: now,
-    };
-    tx.set(ref, payload);
-    tx.set(logRef, {
-      invoiceId: ref.id,
-      timestamp: now,
-      actor: input.actor,
-      action: "create",
-      message: `Custom invoice ${invoiceNumber} created from invoice ${source.invoiceNumber}, dated ${input.date}`,
-      after: { date: input.date, sourceInvoiceId: source.id },
-      ...(input.operationId ? { operationId: input.operationId } : {}),
-    });
-    return hydrateCustomInvoice(ref.id, payload);
-  });
-}
-
-/** The one edit a Custom Invoice allows: its printed date. Logged with before/after like every other change. */
-export async function updateCustomInvoiceDate(input: { id: string; date: string; actor: LogActor; operationId?: string }): Promise<CustomInvoice> {
-  const ref = customInvoicesCol().doc(input.id);
-  const logRef = logsCol().doc();
-  return runOnce(input.operationId, "updateCustomInvoiceDate", { id: input.id, date: input.date }, async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) throw new NotFoundError("Không tìm thấy Custom Invoice.");
-    const before = hydrateCustomInvoice(snap.id, snap.data()!);
-    if (before.date === input.date) return before;
-    const now = Date.now();
-    tx.update(ref, { date: input.date, updatedAt: now });
-    tx.set(logRef, {
-      invoiceId: input.id,
-      timestamp: now,
-      actor: input.actor,
-      action: "update",
-      message: `Date changed from ${before.date} to ${input.date}`,
-      before: { date: before.date },
-      after: { date: input.date },
-      ...(input.operationId ? { operationId: input.operationId } : {}),
-    });
-    return { ...before, date: input.date, updatedAt: now };
+    const { invoiceId, ...rest } = info;
+    const saved = { ...rest, updatedAt: now };
+    tx.set(ref, saved);
+    tx.set(defaultsRef, { from: info.from, terms: info.terms, updatedAt: now });
+    return { ...saved, invoiceId };
   });
 }
