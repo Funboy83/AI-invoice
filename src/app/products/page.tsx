@@ -52,7 +52,16 @@ function ProductsPageContent() {
   const [allProducts, setProducts] = useState<Product[]>([]);
   // Opened from a chat shortcut (/products?id=…): show just that product.
   const focusId = useSearchParams().get("id");
-  const products = focusId ? allProducts.filter((p) => p.id === focusId) : allProducts;
+  // Inactive products stay hidden unless the "Show inactive" toggle is on (a chat link to one product still shows it).
+  const [showInactive, setShowInactive] = useState(false);
+  const inactiveCount = allProducts.filter((p) => !p.active).length;
+  const products = focusId
+    ? allProducts.filter((p) => p.id === focusId)
+    : showInactive
+      ? allProducts
+      : allProducts.filter((p) => p.active);
+  const emptyMessage =
+    !showInactive && inactiveCount > 0 ? "No active products. Tap \"Show inactive\" to see hidden ones." : null;
 
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -156,6 +165,21 @@ function ProductsPageContent() {
       {/* Desktop table */}
       {focusId && <ChatFilterBanner label="Đang xem sản phẩm mở từ chat" clearHref="/products" />}
 
+      {!focusId && inactiveCount > 0 && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => setShowInactive((v) => !v)}
+            className={`rounded-full border px-3 py-1.5 text-sm font-medium ${
+              showInactive
+                ? "border-indigo-600 bg-indigo-50 text-indigo-700"
+                : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            {showInactive ? "Hide inactive" : `Show inactive (${inactiveCount})`}
+          </button>
+        </div>
+      )}
+
       <div className="hidden md:block rounded-2xl border border-slate-200 bg-white overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
@@ -171,8 +195,11 @@ function ProductsPageContent() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {products.map((p) => (
-              <tr key={p.id} className="hover:bg-slate-50">
-                <td className="px-5 py-3 font-medium text-slate-900">{p.name}</td>
+              <tr key={p.id} className={`hover:bg-slate-50 ${p.active ? "" : "opacity-60"}`}>
+                <td className="px-5 py-3 font-medium text-slate-900">
+                  {p.name}
+                  {!p.active && <InactiveBadge />}
+                </td>
                 <td className="px-5 py-3 text-slate-500">
                   <div className="flex flex-wrap gap-1">
                     {p.aliases.slice(0, 4).map((a) => (
@@ -199,7 +226,7 @@ function ProductsPageContent() {
             {products.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-5 py-10 text-center text-slate-400">
-                  No products yet. Add one manually, or paste an order to the AI and it will offer to create it.
+                  {emptyMessage ?? "No products yet. Add one manually, or paste an order to the AI and it will offer to create it."}
                 </td>
               </tr>
             )}
@@ -213,10 +240,13 @@ function ProductsPageContent() {
           <button
             key={p.id}
             onClick={() => openEdit(p)}
-            className="w-full text-left rounded-2xl border border-slate-200 bg-white p-4 active:bg-slate-50"
+            className={`w-full text-left rounded-2xl border border-slate-200 bg-white p-4 active:bg-slate-50 ${p.active ? "" : "opacity-60"}`}
           >
             <div className="flex items-center justify-between">
-              <p className="font-medium text-slate-900">{p.name}</p>
+              <p className="font-medium text-slate-900">
+                {p.name}
+                {!p.active && <InactiveBadge />}
+              </p>
               <p className="font-semibold text-slate-900">${p.defaultPrice.toFixed(2)}</p>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -238,7 +268,7 @@ function ProductsPageContent() {
           </button>
         ))}
         {products.length === 0 && (
-          <p className="text-center text-sm text-slate-400 py-10">No products yet.</p>
+          <p className="text-center text-sm text-slate-400 py-10">{emptyMessage ?? "No products yet."}</p>
         )}
       </div>
 
@@ -372,5 +402,13 @@ function ProductsPageContent() {
         </div>
       )}
     </div>
+  );
+}
+
+function InactiveBadge() {
+  return (
+    <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 align-middle text-[11px] font-medium text-slate-600">
+      Inactive
+    </span>
   );
 }
