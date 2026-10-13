@@ -110,6 +110,22 @@ export async function recordPaymentApi(authedFetch: AuthedFetch, invoiceId: stri
   return call<{ stockWarnings?: string[] }>(authedFetch, "POST", `/api/business/invoices/${invoiceId}/payments`, { amount, method, operationId });
 }
 
+export interface CustomerPaymentResponse {
+  amount: number;
+  allocations: { invoiceId: string; invoiceNumber: string; amount: number; balanceBefore: number; balanceAfter: number }[];
+  leftover: number;
+  credit: number;
+}
+/** One payment from a customer, split by the server across their open invoices oldest first. */
+export async function recordCustomerPaymentApi(
+  authedFetch: AuthedFetch,
+  customerId: string,
+  input: { amount: number; method?: string; note?: string },
+  operationId: string
+): Promise<CustomerPaymentResponse> {
+  return call<CustomerPaymentResponse>(authedFetch, "POST", `/api/business/customers/${customerId}/payments`, { ...input, operationId });
+}
+
 /* Custom Invoice: print information for an existing invoice, read and saved through the server. */
 export async function getInvoicePrintInfoApi(authedFetch: AuthedFetch, invoiceId: string): Promise<{ info: InvoicePrintInfo | null; defaults: CustomInvoiceDefaults }> {
   return call(authedFetch, "GET", `/api/business/custom-invoices/${invoiceId}`, undefined);

@@ -5,6 +5,7 @@ import { __setAdminDbForTests } from "./firebaseAdmin";
 import {
   createInvoice,
   recordPayment,
+  recordCustomerPayment,
   updateInvoiceWithLog,
   createProduct,
   updateProduct,
@@ -454,5 +455,107 @@ describe("stock deduction — tracked (quantity set) vs untracked (quantity omit
     const replay = await updateInvoiceWithLog({ invoiceId: inv.id, status: "unpaid", actor: "ai", reason: "Invoice finalized", operationId: key });
     expect(replay).toEqual(first);
     expect(store.read("products/p1")).toMatchObject({ quantity: 90 });
+  });
+});
+
+describe("recordCustomerPayment — one payment split across a customer's invoices, oldest first", () => {
+  const mk = (amount: number, date: number, op: string, over: Record<string, unknown> = {}) =>
+    createInvoice({ ...base, customerId: "c1", items: [line({ quantity: 1, price: amount, lineTotal: amount })], status: "unpaid", createdBy: "user", actor: "user", operationId: op, ...over }).then(async (i) => {
+      store.put(`invoices/${i.id}`, { ...store.read(`invoices/${i.id}`)!, date });
+      return i;
+    });
+  const owed = async () => (await getCustomerDebt("c1")).balance;
+
+  beforeEach(() => {
+    store.put("customers/c1", { name: "Hoa Lee", aliases: [], active: true });
+  });
+
+  it("several invoices: oldest paid in full, next one partial, newest untouched; total owed drops by exactly the payment", async () => {
+    const newest = await mk(50, 3000, "s3");
+    const oldest = await mk(100, 1000, "s1");
+    const middle = await mk(80, 2000, "s2");
+    expect(await owed()).toBe(230);
+    const r = await recordCustomerPayment({ customerId: "c1", amount: 150, method: "cash", actor: "user", operationId: "cp1" });
+    expect(r.allocations.map((a) => [a.invoiceId, a.amount])).toEqual([[oldest.id, 100], [middle.id, 50]]);
+    expect(store.read(`invoices/${oldest.id}`)).toMatchObject({ amountPaid: 100, balance: 0, paymentStatus: "paid" });
+    expect(store.read(`invoices/${middle.id}`)).toMatchObject({ amountPaid: 50, balance: 30, paymentStatus: "partial" });
+    expect(store.read(`invoices/${newest.id}`)).toMatchObject({ amountPaid: 0, balance: 50, paymentStatus: "unpaid" });
+    expect(await owed()).toBe(80);
+    expect(r.leftover).toBe(0);
+    expect(store.read("customers/c1")).not.toHaveProperty("credit");
+    // One payment row and one log per invoice touched, sharing one receipt id.
+    const pays = store.list("payments").map(([, p]) => p);
+    expect(pays.map((p) => [p.invoiceId, p.amount])).toEqual(expect.arrayContaining([[oldest.id, 100], [middle.id, 50]]));
+    expect(pays).toHaveLength(2);
+    expect(new Set(pays.map((p) => p.receiptId)).size).toBe(1);
+    expect(store.list("invoiceLogs").filter(([, l]) => l.action === "payment")).toHaveLength(2);
+  });
+
+  it("exact pay: everything paid, no credit", async () => {
+    await mk(100, 1000, "s1");
+    await mk(80.25, 2000, "s2");
+    const r = await recordCustomerPayment({ customerId: "c1", amount: 180.25, actor: "user" });
+    expect(r.leftover).toBe(0);
+    expect(await owed()).toBe(0);
+    expect(store.list("invoices").every(([, i]) => i.paymentStatus === "paid")).toBe(true);
+  });
+
+  it("overpay: invoices paid, the extra is kept as customer credit with its own payment row", async () => {
+    await mk(100, 1000, "s1");
+    const r = await recordCustomerPayment({ customerId: "c1", amount: 130, actor: "user" });
+    expect(r.leftover).toBe(30);
+    expect(r.credit).toBe(30);
+    expect(store.read("customers/c1")).toMatchObject({ credit: 30 });
+    const extra = store.list("payments").map(([, p]) => p).find((p) => p.unallocated);
+    expect(extra).toMatchObject({ invoiceId: "", customerId: "c1", amount: 30, unallocated: true });
+    // A second overpay adds to the existing credit.
+    await recordCustomerPayment({ customerId: "c1", amount: 5, actor: "user" });
+    expect(store.read("customers/c1")).toMatchObject({ credit: 35 });
+  });
+
+  it("a $0 open delivery is skipped (stays unpaid at $0) and the money goes to the next invoice", async () => {
+    const delivery = await mk(0, 500, "d0", { delivery: true, items: [line({ quantity: 3, price: 0, lineTotal: 0 })] });
+    const real = await mk(60, 1000, "s1");
+    const r = await recordCustomerPayment({ customerId: "c1", amount: 60, actor: "user" });
+    expect(r.allocations.map((a) => a.invoiceId)).toEqual([real.id]);
+    expect(store.read(`invoices/${delivery.id}`)).toMatchObject({ amountPaid: 0, balance: 0 });
+    expect(store.read(`invoices/${real.id}`)).toMatchObject({ paymentStatus: "paid" });
+  });
+
+  it("drafts, voids, paid invoices and other customers' invoices are never touched", async () => {
+    const draft = await mk(40, 100, "dr", { status: "draft" });
+    const other = await mk(40, 100, "ot", { customerId: "c2" });
+    const real = await mk(40, 1000, "s1");
+    await recordCustomerPayment({ customerId: "c1", amount: 40, actor: "user" });
+    expect(store.read(`invoices/${draft.id}`)).toMatchObject({ amountPaid: 0, paymentStatus: "draft" });
+    expect(store.read(`invoices/${other.id}`)).toMatchObject({ amountPaid: 0, paymentStatus: "unpaid" });
+    expect(store.read(`invoices/${real.id}`)).toMatchObject({ paymentStatus: "paid" });
+  });
+
+  it("does not touch stock (only already-committed invoices are paid)", async () => {
+    store.put("products/p1", { name: "Milo", quantity: 50, active: true });
+    await mk(29, 1000, "s1");
+    const before = store.read("products/p1");
+    await recordCustomerPayment({ customerId: "c1", amount: 29, actor: "user" });
+    expect(store.read("products/p1")).toEqual(before);
+  });
+
+  it("replaying the same operationId applies the payment once; a reused key with a different amount is rejected", async () => {
+    await mk(100, 1000, "s1");
+    await recordCustomerPayment({ customerId: "c1", amount: 40, actor: "user", operationId: "cp-retry" });
+    await recordCustomerPayment({ customerId: "c1", amount: 40, actor: "user", operationId: "cp-retry" });
+    expect(await owed()).toBe(60);
+    expect(store.count("payments")).toBe(1);
+    await expect(recordCustomerPayment({ customerId: "c1", amount: 41, actor: "user", operationId: "cp-retry" })).rejects.toBeInstanceOf(OperationConflictError);
+  });
+
+  it("rejects a missing customer and a non-positive amount with no write", async () => {
+    await mk(100, 1000, "s1");
+    await expect(recordCustomerPayment({ customerId: "nope", amount: 10, actor: "user" })).rejects.toBeInstanceOf(NotFoundError);
+    for (const bad of [0, -5, Number.NaN, Infinity]) {
+      await expect(recordCustomerPayment({ customerId: "c1", amount: bad, actor: "user" })).rejects.toBeInstanceOf(ValidationError);
+    }
+    expect(store.count("payments")).toBe(0);
+    expect(await owed()).toBe(100);
   });
 });

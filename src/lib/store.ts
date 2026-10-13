@@ -216,6 +216,7 @@ function hydrateCustomer(id: string, data: Record<string, unknown>): Customer {
     shippingAddress: data.shippingAddress as string | undefined,
     notes: data.notes as string | undefined,
     defaultShipping: data.defaultShipping as number | undefined,
+    ...(typeof data.credit === "number" && data.credit > 0 ? { credit: data.credit } : {}),
     active: (data.active as boolean) ?? true,
     createdAt: toMillis(data.createdAt),
     updatedAt: toMillis(data.updatedAt),

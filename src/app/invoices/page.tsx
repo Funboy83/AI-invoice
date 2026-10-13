@@ -12,14 +12,7 @@ import { isInvoiceIncomplete, isOpenDelivery, type Invoice, type Product, type C
 import { Plus, X, Trash2, AlertTriangle, Truck } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
 import DeliveryBadge from "@/components/DeliveryBadge";
-
-const statusStyles: Record<string, string> = {
-  draft: "bg-slate-100 text-slate-600",
-  unpaid: "bg-blue-100 text-blue-700",
-  partial: "bg-amber-100 text-amber-700",
-  paid: "bg-emerald-100 text-emerald-700",
-  void: "bg-red-100 text-red-700",
-};
+import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 
 interface DraftLine {
   productId: string;
@@ -246,9 +239,7 @@ function InvoicesPageContent() {
                 <td className="px-5 py-3 text-right text-slate-900 font-medium">${inv.total.toFixed(2)}</td>
                 <td className="px-5 py-3 text-right text-slate-700">${inv.balance.toFixed(2)}</td>
                 <td className="px-5 py-3">
-                  <span className={`text-[11px] uppercase font-medium px-2 py-0.5 rounded-full ${statusStyles[inv.paymentStatus]}`}>
-                    {inv.paymentStatus}
-                  </span>
+                  <PaymentStatusBadge status={inv.paymentStatus} />
                   {inv.delivery && (
                     <span className="ml-1.5">
                       <DeliveryBadge invoice={inv} />
@@ -283,9 +274,7 @@ function InvoicesPageContent() {
           >
             <div className="flex items-center justify-between">
               <p className="font-medium text-slate-900">#{inv.invoiceNumber} · {inv.customerName}</p>
-              <span className={`text-[10px] uppercase font-medium px-2 py-0.5 rounded-full ${statusStyles[inv.paymentStatus]}`}>
-                {inv.paymentStatus}
-              </span>
+              <PaymentStatusBadge status={inv.paymentStatus} />
             </div>
             {inv.delivery && (
               <div className="mt-1">

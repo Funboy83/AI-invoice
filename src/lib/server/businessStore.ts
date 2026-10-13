@@ -2,6 +2,7 @@ import { FieldPath, Timestamp, type DocumentReference, type Firestore, type Tran
 import { getAdminDb } from "./firebaseAdmin";
 import { DomainError, NotFoundError, OperationConflictError } from "@/lib/domainErrors";
 import { assertFiniteAmount, assertFiniteTotals, assertNonNegativeAmount, assertPositiveAmount, calcTotals, computePaymentStatus, invoiceItemsForWrite, sanitizeInvoiceItems } from "@/lib/invoiceMath";
+import { allocatePaymentOldestFirst, type PaymentAllocation } from "@/lib/paymentAllocation";
 import { isCommittedStatus, isOpenDelivery, type Customer, type CustomInvoiceDefaults, type InvoicePrintInfo, type PrintParty, type DeliveryInfo, type Invoice, type InvoiceLineItem, type InvoiceLog, type InvoiceStatus, type LogActor, type Payment, type Product } from "@/lib/types";
 
 /**
@@ -186,6 +187,7 @@ function hydrateCustomer(id: string, data: Record<string, unknown>): Customer {
     shippingAddress: data.shippingAddress as string | undefined,
     notes: data.notes as string | undefined,
     defaultShipping: data.defaultShipping as number | undefined,
+    ...(typeof data.credit === "number" && data.credit > 0 ? { credit: data.credit } : {}),
     active: (data.active as boolean) ?? true,
     createdAt: toMillis(data.createdAt),
     updatedAt: toMillis(data.updatedAt),
@@ -642,6 +644,97 @@ export async function recordPayment(input: {
       payment: { id: paymentRef.id, ...paymentPayload } as Payment,
       ...(stockWarnings.length ? { stockWarnings } : {}),
     };
+  });
+}
+
+export interface CustomerPaymentResult {
+  receiptId: string;
+  amount: number;
+  allocations: PaymentAllocation[];
+  /** Part of the payment no open invoice needed, added to the customer's credit. */
+  leftover: number;
+  /** Customer credit after this payment. */
+  credit: number;
+  invoices: Invoice[];
+  payments: Payment[];
+}
+
+/**
+ * One payment from a customer, split across their open (unpaid/partial) invoices OLDEST first — KiotViet's
+ * "Phân bổ vào hóa đơn". The split itself is allocatePaymentOldestFirst (shared with the customer page's preview);
+ * this only writes it, in ONE transaction: each invoice's amountPaid/balance/status, one payment row + one audit
+ * log per invoice (so each invoice's own payment history stays complete), and any leftover as customer credit with
+ * its own payment row (invoiceId "", unallocated: true) so the money is never lost. Every row shares a receiptId.
+ *
+ * Only invoices already committed (unpaid/partial) receive money, so stock is never touched here — unlike
+ * recordPayment, which can commit a draft. The customer's total owed always drops by exactly the allocated amount.
+ */
+export async function recordCustomerPayment(input: {
+  customerId: string;
+  amount: number;
+  method?: string;
+  note?: string;
+  actor: LogActor;
+  operationId?: string;
+}): Promise<CustomerPaymentResult> {
+  assertPositiveAmount(input.amount, "amount");
+  const customerRef = customersCol().doc(input.customerId);
+  // Which invoices belong to the customer is looked up first; every one is then re-read INSIDE the transaction,
+  // so the amounts the split uses are the committed ones, never a stale copy.
+  const invoiceRefs = (await invoicesCol().where("customerId", "==", input.customerId).get()).docs.map((d) => d.ref);
+  const receiptId = paymentsCol().doc().id;
+
+  const fingerprint = { customerId: input.customerId, amount: input.amount, method: input.method, note: input.note };
+  return runOnce(input.operationId, "recordCustomerPayment", fingerprint, async (tx) => {
+    const customerSnap = await tx.get(customerRef);
+    if (!customerSnap.exists) throw new NotFoundError("Customer not found");
+    const snaps = [];
+    for (const ref of invoiceRefs) snaps.push(await tx.get(ref));
+    const open = snaps
+      .filter((s) => s.exists)
+      .map((s) => hydrateInvoice(s.id, s.data()!))
+      .filter((i) => i.customerId === input.customerId);
+    const byId = new Map(open.map((i) => [i.id, i]));
+    const { allocations, leftover } = allocatePaymentOldestFirst(open, input.amount);
+    const now = Date.now();
+
+    const invoices: Invoice[] = [];
+    const payments: Payment[] = [];
+    const base = { customerId: input.customerId, method: input.method ?? "", note: input.note ?? "", createdAt: now, actor: input.actor, receiptId };
+    for (const a of allocations) {
+      const before = byId.get(a.invoiceId)!;
+      const amountPaid = Math.round((before.amountPaid + a.amount) * 100) / 100;
+      const balance = Math.round((before.total - amountPaid) * 100) / 100;
+      const paymentStatus = computePaymentStatus(before.total, amountPaid, before.paymentStatus);
+      tx.update(invoicesCol().doc(a.invoiceId), { amountPaid, balance, paymentStatus, updatedAt: now });
+      const paymentRef = paymentsCol().doc();
+      const payload = { ...base, invoiceId: a.invoiceId, amount: a.amount };
+      tx.set(paymentRef, payload);
+      tx.set(logsCol().doc(), {
+        invoiceId: a.invoiceId,
+        timestamp: now,
+        actor: input.actor,
+        action: "payment",
+        message: `Payment of $${a.amount.toFixed(2)} recorded from a $${input.amount.toFixed(2)} customer payment, oldest invoice first (balance now $${balance.toFixed(2)})`,
+        before: { amountPaid: before.amountPaid, balance: before.balance },
+        after: { amountPaid, balance },
+        ...(input.operationId ? { operationId: input.operationId } : {}),
+      });
+      invoices.push({ ...before, amountPaid, balance, paymentStatus, updatedAt: now });
+      payments.push({ id: paymentRef.id, ...payload });
+    }
+
+    const creditBefore = hydrateCustomer(customerSnap.id, customerSnap.data()!).credit ?? 0;
+    const credit = Math.round((creditBefore + leftover) * 100) / 100;
+    if (leftover > 0) {
+      tx.update(customerRef, { credit, updatedAt: now });
+      const paymentRef = paymentsCol().doc();
+      const payload = { ...base, invoiceId: "", amount: leftover, unallocated: true };
+      tx.set(paymentRef, payload);
+      payments.push({ id: paymentRef.id, ...payload });
+    }
+
+    return { receiptId, amount: input.amount, allocations, leftover, credit, invoices, payments };
   });
 }
 

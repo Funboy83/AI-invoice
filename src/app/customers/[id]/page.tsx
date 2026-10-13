@@ -6,18 +6,12 @@ import { useParams, useRouter } from "next/navigation";
 import { watchCustomers, watchInvoicesForCustomer } from "@/lib/store";
 import { daysSince, summarizeCustomerInvoices } from "@/lib/customerInvoices";
 import CustomerFormModal from "@/components/CustomerFormModal";
+import CustomerPaymentModal from "@/components/CustomerPaymentModal";
 import DeliveryBadge from "@/components/DeliveryBadge";
+import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Customer, Invoice } from "@/lib/types";
-import { ArrowLeft, Pencil, Phone, ChevronRight } from "lucide-react";
-
-const statusStyles: Record<string, string> = {
-  draft: "bg-slate-100 text-slate-600",
-  unpaid: "bg-blue-100 text-blue-700",
-  partial: "bg-amber-100 text-amber-700",
-  paid: "bg-emerald-100 text-emerald-700",
-  void: "bg-red-100 text-red-700",
-};
+import { ArrowLeft, Pencil, Phone, ChevronRight, DollarSign } from "lucide-react";
 
 type Tab = "unpaid" | "paid" | "all";
 
@@ -30,6 +24,7 @@ export default function CustomerDetailPage() {
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [tab, setTab] = useState<Tab>("unpaid");
   const [editing, setEditing] = useState(false);
+  const [paying, setPaying] = useState(false);
 
   useEffect(() => {
     const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
@@ -117,6 +112,9 @@ export default function CustomerDetailPage() {
               ? "All paid up"
               : `${summary.unpaid.length} unpaid invoice${summary.unpaid.length > 1 ? "s" : ""}`}
           </p>
+          {(customer.credit ?? 0) > 0 && (
+            <p className="text-xs font-medium text-sky-700 mt-1">Credit ${customer.credit!.toFixed(2)} (paid extra)</p>
+          )}
         </div>
         <SummaryCard
           label="Oldest unpaid"
@@ -126,6 +124,13 @@ export default function CustomerDetailPage() {
         <SummaryCard label="Total billed" value={`$${summary.totalBilled.toFixed(2)}`} sub={`${summary.unpaid.length + summary.paid.length} invoices`} />
         <SummaryCard label="Total paid" value={`$${summary.totalPaid.toFixed(2)}`} sub={`${summary.paid.length} fully paid`} />
       </div>
+
+      <button
+        onClick={() => setPaying(true)}
+        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white hover:bg-emerald-700 active:bg-emerald-800"
+      >
+        <DollarSign size={18} /> Record payment
+      </button>
 
       {/* Unpaid / Paid / All */}
       <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm font-medium">
@@ -142,7 +147,7 @@ export default function CustomerDetailPage() {
         ))}
       </div>
       {tab === "unpaid" && summary.unpaid.length > 0 && (
-        <p className="text-xs text-slate-500 -mt-2">Oldest first. Tap an invoice to record a payment.</p>
+        <p className="text-xs text-slate-500 -mt-2">Oldest first. A payment from Record payment pays these from the top down.</p>
       )}
 
       <div className="space-y-2">
@@ -155,9 +160,7 @@ export default function CustomerDetailPage() {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="font-medium text-slate-900">#{inv.invoiceNumber}</p>
-                <span className={`text-[10px] uppercase font-medium px-2 py-0.5 rounded-full ${statusStyles[inv.paymentStatus]}`}>
-                  {inv.paymentStatus}
-                </span>
+                <PaymentStatusBadge status={inv.paymentStatus} />
                 {inv.delivery && <DeliveryBadge invoice={inv} />}
               </div>
               <p className="text-xs text-slate-500 mt-1">
@@ -183,6 +186,7 @@ export default function CustomerDetailPage() {
       </div>
 
       {editing && <CustomerFormModal customer={customer} onClose={() => setEditing(false)} />}
+      {paying && <CustomerPaymentModal customer={customer} invoices={summary.unpaid} totalOwed={summary.totalOwed} onClose={() => setPaying(false)} />}
     </div>
   );
 }

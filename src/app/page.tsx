@@ -7,6 +7,7 @@ import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import { isInvoiceIncomplete, type Product, type Customer, type Invoice } from "@/lib/types";
 import { FileText, Boxes, Users, AlertTriangle } from "lucide-react";
 import MobileChatHome from "@/components/MobileChatHome";
+import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 
 function StatCard({ label, value, icon: Icon }: { label: string; value: string; icon: typeof FileText }) {
   return (
@@ -115,9 +116,7 @@ function DashboardContent() {
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-sm font-semibold text-slate-900">${inv.total.toFixed(2)}</span>
-                <span className="text-[11px] uppercase font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-                  {inv.paymentStatus}
-                </span>
+                <PaymentStatusBadge status={inv.paymentStatus} />
               </div>
             </Link>
           ))}

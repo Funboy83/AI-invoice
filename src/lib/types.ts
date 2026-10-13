@@ -27,6 +27,8 @@ export interface Customer {
   shippingAddress?: string;
   notes?: string;
   defaultShipping?: number;
+  /** Money the customer paid beyond what their open invoices owed (kept, not lost). Absent = $0. */
+  credit?: number;
   active: boolean;
   createdAt: number;
   updatedAt: number;
@@ -99,6 +101,10 @@ export interface Payment {
   note?: string;
   createdAt: number;
   actor: LogActor;
+  /** Shared by every payment row created from one customer payment split oldest-first across invoices. */
+  receiptId?: string;
+  /** True on the row for the part of a customer payment no open invoice needed (kept as customer credit; invoiceId is ""). */
+  unallocated?: boolean;
 }
 
 export interface InvoiceLog {
