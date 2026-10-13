@@ -29,7 +29,7 @@ export default function InvoiceDetailPage() {
   // Opened from a customer page (?back=/customers/…): Back returns there. Only that in-app path is honored.
   const backParam = searchParams.get("back");
   const backHref = backParam && /^\/customers\/[^/?#]+$/.test(backParam) ? backParam : "/invoices";
-  const { authedFetch, notifyPossibleRevocation } = useAppAuth();
+  const { authedFetch, notifyPossibleRevocation, reportListenerError } = useAppAuth();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<InvoiceLog[]>([]);
@@ -80,17 +80,17 @@ export default function InvoiceDetailPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- initial async load, not a derived-state anti-pattern
     load();
-    const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
+    const onErr = reportListenerError;
     const u1 = watchInvoiceLogs(id, setLogs, onErr);
     return () => u1();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, notifyPossibleRevocation]);
+  }, [id, reportListenerError]);
 
   // The full product catalog is only needed for the product picker while editing — don't stream it just to view/print.
   useEffect(() => {
     if (!editing) return;
-    return watchProducts(setProducts, (err) => isPermissionDenied(err) && notifyPossibleRevocation());
-  }, [editing, notifyPossibleRevocation]);
+    return watchProducts(setProducts, reportListenerError);
+  }, [editing, reportListenerError]);
 
   function startEdit() {
     if (!invoice) return;

@@ -7,7 +7,7 @@ import { watchInvoices, watchProducts, watchCustomers } from "@/lib/store";
 import { createInvoiceApi, createCustomerApi, createProductApi, newOperationId } from "@/lib/businessApi";
 import ChatFilterBanner from "@/components/ChatFilterBanner";
 import { useActionId } from "@/lib/useActionId";
-import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
+import { useAppAuth } from "@/lib/useAppAuth";
 import { isInvoiceIncomplete, isOpenDelivery, type Invoice, type Product, type Customer, type InvoiceLineItem } from "@/lib/types";
 import { Plus, X, Trash2, AlertTriangle, Truck } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
@@ -39,7 +39,7 @@ export default function InvoicesPage() {
 
 function InvoicesPageContent() {
   const router = useRouter();
-  const { authedFetch, notifyPossibleRevocation } = useAppAuth();
+  const { authedFetch, reportListenerError } = useAppAuth();
   const [allInvoices, setInvoices] = useState<Invoice[]>([]);
   // Opened from a chat shortcut: /invoices?customer=… (one customer's invoices) and/or ?status=unpaid (unpaid + partial).
   const searchParams = useSearchParams();
@@ -72,7 +72,7 @@ function InvoicesPageContent() {
   const createAction = useActionId(); // one stable id per open of the "New invoice" modal, reused across retries
 
   useEffect(() => {
-    const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
+    const onErr = reportListenerError;
     const u1 = watchInvoices(setInvoices, onErr);
     const u2 = watchProducts(setProducts, onErr);
     const u3 = watchCustomers(setCustomers, onErr);
@@ -81,7 +81,7 @@ function InvoicesPageContent() {
       u2();
       u3();
     };
-  }, [notifyPossibleRevocation]);
+  }, [reportListenerError]);
 
   const total = useMemo(() => {
     const subtotal = lines.reduce((sum, l) => sum + l.quantity * l.price, 0);

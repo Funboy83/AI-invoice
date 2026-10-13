@@ -6,7 +6,7 @@ import { createProductApi, updateProductApi } from "@/lib/businessApi";
 import { useSearchParams } from "next/navigation";
 import ChatFilterBanner from "@/components/ChatFilterBanner";
 import { useActionId } from "@/lib/useActionId";
-import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
+import { useAppAuth } from "@/lib/useAppAuth";
 import type { Product } from "@/lib/types";
 import { Plus, Pencil, X } from "lucide-react";
 
@@ -48,7 +48,7 @@ export default function ProductsPage() {
 }
 
 function ProductsPageContent() {
-  const { authedFetch, notifyPossibleRevocation } = useAppAuth();
+  const { authedFetch, reportListenerError } = useAppAuth();
   const [allProducts, setProducts] = useState<Product[]>([]);
   // Opened from a chat shortcut (/products?id=…): show just that product.
   const focusId = useSearchParams().get("id");
@@ -69,7 +69,7 @@ function ProductsPageContent() {
   const [error, setError] = useState("");
   const saveAction = useActionId(); // one stable id per open of the modal, reused across retries of THIS save
 
-  useEffect(() => watchProducts(setProducts, (err) => isPermissionDenied(err) && notifyPossibleRevocation()), [notifyPossibleRevocation]);
+  useEffect(() => watchProducts(setProducts, reportListenerError), [reportListenerError]);
 
   function openCreate() {
     setForm(emptyForm);
