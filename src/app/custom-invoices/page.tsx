@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Search } from "lucide-react";
+import { Search, Printer, Pencil } from "lucide-react";
 import { watchInvoices } from "@/lib/store";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import { findSimilar } from "@/lib/similarity";
@@ -19,24 +19,30 @@ export default function CustomInvoicesPage() {
   const [query, setQuery] = useState("");
 
   useEffect(
-    () => watchInvoices((all) => setInvoices(all.filter((i) => isCommittedStatus(i.paymentStatus))), (err) => isPermissionDenied(err) && notifyPossibleRevocation()),
-    [notifyPossibleRevocation]
+    () =>
+      watchInvoices(
+        (all) => setInvoices(all.filter((i) => isCommittedStatus(i.paymentStatus))),
+        (err) => isPermissionDenied(err) && notifyPossibleRevocation(),
+      ),
+    [notifyPossibleRevocation],
   );
 
   const q = query.trim();
   const shown = !q
     ? invoices
-    : invoices.filter((i) => i.invoiceNumber.includes(q)).concat(
-        findSimilar(q, invoices, (i) => i.customerName, 0.3)
-          .map((m) => m.item)
-          .filter((i) => !i.invoiceNumber.includes(q))
-      );
+    : invoices
+        .filter((i) => i.invoiceNumber.includes(q))
+        .concat(
+          findSimilar(q, invoices, (i) => i.customerName, 0.3)
+            .map((m) => m.item)
+            .filter((i) => !i.invoiceNumber.includes(q)),
+        );
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-5 pb-24 md:pb-8">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Custom Invoice</h1>
-        <p className="text-sm text-slate-500 mt-1">Pick an invoice to add company info, dates and notes, and print it with a different template.</p>
+        <p className="text-sm text-slate-500 mt-1">Print an invoice with a different template, or tap Edit to add company info, dates and notes first.</p>
       </div>
 
       <div className="relative">
@@ -51,21 +57,29 @@ export default function CustomInvoicesPage() {
 
       <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100 overflow-hidden">
         {shown.map((inv) => (
-          <Link
-            key={inv.id}
-            href={`/custom-invoices/${inv.id}`}
-            className="flex items-center justify-between gap-3 px-4 md:px-5 py-3.5 hover:bg-slate-50 active:bg-slate-50"
-          >
-            <div className="min-w-0">
+          <div key={inv.id} className="flex items-center gap-3 px-4 md:px-5 py-3">
+            <Link href={`/custom-invoices/${inv.id}`} className="min-w-0 flex-1">
               <p className="font-medium text-slate-900 truncate">
                 #{inv.invoiceNumber} · {inv.customerName}
               </p>
               <p className="text-xs text-slate-500 mt-0.5">
-                {new Date(inv.date).toLocaleDateString()} · {inv.items.length} item{inv.items.length === 1 ? "" : "s"}
+                {new Date(inv.date).toLocaleDateString()} · ${inv.total.toFixed(2)}
               </p>
-            </div>
-            <p className="text-sm font-semibold text-slate-900 shrink-0">${inv.total.toFixed(2)}</p>
-          </Link>
+            </Link>
+            {/* Two clear choices per invoice: print it as it is, or open the form to change the printed info. */}
+            <Link
+              href={`/custom-invoices/${inv.id}?print=1`}
+              className="flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shrink-0"
+            >
+              <Printer size={14} /> Print
+            </Link>
+            <Link
+              href={`/custom-invoices/${inv.id}?edit=1`}
+              className="flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shrink-0"
+            >
+              <Pencil size={14} /> Edit
+            </Link>
+          </div>
         ))}
         {shown.length === 0 && <p className="px-5 py-10 text-center text-sm text-slate-400">{q ? "No matching invoices." : "No invoices yet."}</p>}
       </div>
