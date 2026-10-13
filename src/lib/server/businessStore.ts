@@ -2,7 +2,7 @@ import { FieldPath, Timestamp, type DocumentReference, type Firestore, type Tran
 import { getAdminDb } from "./firebaseAdmin";
 import { DomainError, NotFoundError, OperationConflictError } from "@/lib/domainErrors";
 import { assertFiniteAmount, assertFiniteTotals, assertNonNegativeAmount, assertPositiveAmount, calcTotals, computePaymentStatus, invoiceItemsForWrite, sanitizeInvoiceItems } from "@/lib/invoiceMath";
-import { isCommittedStatus, isOpenDelivery, type Customer, type DeliveryInfo, type Invoice, type InvoiceLineItem, type InvoiceLog, type InvoiceStatus, type LogActor, type Payment, type Product } from "@/lib/types";
+import { isCommittedStatus, isOpenDelivery, type Customer, type CustomInvoiceDefaults, type InvoicePrintInfo, type PrintParty, type DeliveryInfo, type Invoice, type InvoiceLineItem, type InvoiceLog, type InvoiceStatus, type LogActor, type Payment, type Product } from "@/lib/types";
 
 /**
  * Admin-SDK mirror of src/lib/store.ts: same collections, same transactions, same idempotency ledger, same totals
@@ -24,6 +24,8 @@ const paymentsCol = () => db().collection("payments");
 const logsCol = () => db().collection("invoiceLogs");
 const countersCol = () => db().collection("counters");
 const operationsCol = () => db().collection("operations");
+const printInfoCol = () => db().collection("invoicePrintInfo");
+const settingsCol = () => db().collection("settings");
 
 /**
  * Runs `body` in a transaction idempotent per `operationId` (see store.ts's runOnce for the base contract — same
@@ -669,4 +671,44 @@ export async function getUnpaidInvoices(statusFilter?: InvoiceStatus): Promise<I
 export async function getInvoiceLogs(invoiceId: string): Promise<InvoiceLog[]> {
   const snap = await logsCol().where("invoiceId", "==", invoiceId).get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as InvoiceLog).sort((a, b) => b.timestamp - a.timestamp);
+}
+
+/* ------------------------- Custom invoice print info ------------------------- */
+
+const DEFAULT_FROM: PrintParty = {
+  name: "N&E ENTERPRISE INC",
+  address: "14902 Moran St, Suite A\nWestminster, CA 92683",
+  phone: "714-233-8888",
+  email: "Nneenterpriseinc@gmail.com",
+};
+
+export async function getCustomInvoiceDefaults(): Promise<CustomInvoiceDefaults> {
+  const snap = await settingsCol().doc("customInvoiceDefaults").get();
+  const data = snap.exists ? (snap.data() as Partial<CustomInvoiceDefaults>) : {};
+  return { from: data.from ?? DEFAULT_FROM, terms: data.terms ?? "" };
+}
+
+export async function getInvoicePrintInfo(invoiceId: string): Promise<InvoicePrintInfo | null> {
+  const snap = await printInfoCol().doc(invoiceId).get();
+  return snap.exists ? ({ ...(snap.data() as Omit<InvoicePrintInfo, "invoiceId">), invoiceId }) : null;
+}
+
+/**
+ * Saves the print information for one invoice (overwrites the previous version) and remembers its company block
+ * and terms as the defaults for the next one. Never reads or writes the invoice itself: the printout's customer,
+ * items and money always come from the live invoice, so nothing here can change a price, a total or a debt.
+ */
+export async function saveInvoicePrintInfo(info: Omit<InvoicePrintInfo, "updatedAt">): Promise<InvoicePrintInfo> {
+  const invoiceRef = invoicesCol().doc(info.invoiceId);
+  const ref = printInfoCol().doc(info.invoiceId);
+  const defaultsRef = settingsCol().doc("customInvoiceDefaults");
+  return db().runTransaction(async (tx) => {
+    if (!(await tx.get(invoiceRef)).exists) throw new NotFoundError("Không tìm thấy hóa đơn.");
+    const now = Date.now();
+    const { invoiceId, ...rest } = info;
+    const saved = { ...rest, updatedAt: now };
+    tx.set(ref, saved);
+    tx.set(defaultsRef, { from: info.from, terms: info.terms, updatedAt: now });
+    return { ...saved, invoiceId };
+  });
 }

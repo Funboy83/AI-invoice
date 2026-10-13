@@ -1,5 +1,5 @@
 import { ValidationError } from "@/lib/domainErrors";
-import type { InvoiceLineItem, InvoiceStatus } from "@/lib/types";
+import type { CustomInvoiceTemplate, InvoiceLineItem, InvoicePrintInfo, InvoiceStatus } from "@/lib/types";
 
 /**
  * Server-side validation for the manual business API routes. The client already guards most of this (see the page
@@ -146,4 +146,50 @@ export function optionalOperationId(v: unknown): string | undefined {
   if (v === undefined || v === null) return undefined;
   if (typeof v !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(v)) throw new ValidationError("operationId không hợp lệ.");
   return v;
+}
+
+/** A real calendar date written as "YYYY-MM-DD" (rejects 2026-02-30 and anything outside 2000–2100). */
+export function requireDateKey(v: unknown, field: string): string {
+  if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new ValidationError(`${field} phải có dạng YYYY-MM-DD.`);
+  const [y, m, d] = v.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (y < 2000 || y > 2100 || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) throw new ValidationError(`${field} không phải ngày hợp lệ.`);
+  return v;
+}
+
+/** Optional "YYYY-MM-DD": empty/missing means "not printed". */
+export function optionalDateKey(v: unknown, field: string): string {
+  if (v === undefined || v === null || v === "") return "";
+  return requireDateKey(v, field);
+}
+
+/** Plain text field for the Custom Invoice form: missing → "", must be a string, length-capped. */
+function text(v: unknown, field: string, maxLen = 500): string {
+  return optionalString(v, field, maxLen) ?? "";
+}
+
+function obj(v: unknown): Record<string, unknown> {
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+}
+
+/** The editable part of a Custom Invoice: information and notes only — never customer name, items or money. */
+export function requirePrintInfo(body: Record<string, unknown>): Omit<InvoicePrintInfo, "invoiceId" | "updatedAt"> {
+  const templates: CustomInvoiceTemplate[] = ["professional", "simple"];
+  const template = body.template as CustomInvoiceTemplate;
+  if (!templates.includes(template)) throw new ValidationError("Mẫu in không hợp lệ.");
+  const from = obj(body.from);
+  const billTo = obj(body.billTo);
+  const shipTo = obj(body.shipTo);
+  return {
+    template,
+    from: { name: text(from.name, "Tên công ty", MAX_NAME_LEN), address: text(from.address, "Địa chỉ công ty"), phone: text(from.phone, "SĐT công ty", 100), email: text(from.email, "Email công ty", 200) },
+    billTo: { address: text(billTo.address, "Địa chỉ khách"), phone: text(billTo.phone, "SĐT khách", 100) },
+    shipTo: { name: text(shipTo.name, "Người nhận", MAX_NAME_LEN), address: text(shipTo.address, "Địa chỉ giao"), phone: text(shipTo.phone, "SĐT người nhận", 100) },
+    date: requireDateKey(body.date, "Ngày"),
+    dueDate: optionalDateKey(body.dueDate, "Ngày đến hạn"),
+    deliveryDate: optionalDateKey(body.deliveryDate, "Ngày giao"),
+    po: text(body.po, "P.O. #", 100),
+    notes: text(body.notes, "Ghi chú", MAX_TEXT_LEN),
+    terms: text(body.terms, "Terms & Conditions", MAX_TEXT_LEN),
+  };
 }

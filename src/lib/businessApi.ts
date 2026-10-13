@@ -14,10 +14,10 @@
  * for; this shape makes that mistake a compile error instead of a subtle bug.
  */
 import type { AuthedFetch } from "./chat/types";
-import type { Customer, Invoice, InvoiceLineItem, InvoiceStatus, Product } from "./types";
+import type { Customer, CustomInvoiceDefaults, Invoice, InvoicePrintInfo, InvoiceLineItem, InvoiceStatus, Product } from "./types";
 
-async function call<T>(authedFetch: AuthedFetch, method: "POST" | "PATCH", url: string, body: unknown): Promise<T> {
-  const res = await authedFetch(url, { method, body: JSON.stringify(body) });
+async function call<T>(authedFetch: AuthedFetch, method: "GET" | "POST" | "PATCH" | "PUT", url: string, body: unknown): Promise<T> {
+  const res = await authedFetch(url, method === "GET" ? { method } : { method, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? "Có lỗi xảy ra.");
   return data as T;
@@ -108,4 +108,21 @@ export async function updateInvoiceApi(authedFetch: AuthedFetch, id: string, inp
 
 export async function recordPaymentApi(authedFetch: AuthedFetch, invoiceId: string, amount: number, method: string | undefined, operationId: string): Promise<{ stockWarnings?: string[] }> {
   return call<{ stockWarnings?: string[] }>(authedFetch, "POST", `/api/business/invoices/${invoiceId}/payments`, { amount, method, operationId });
+}
+
+/* Custom Invoice: print information for an existing invoice, read and saved through the server. */
+export async function getInvoicePrintInfoApi(authedFetch: AuthedFetch, invoiceId: string): Promise<{ info: InvoicePrintInfo | null; defaults: CustomInvoiceDefaults }> {
+  return call(authedFetch, "GET", `/api/business/custom-invoices/${invoiceId}`, undefined);
+}
+
+export async function saveInvoicePrintInfoApi(authedFetch: AuthedFetch, info: Omit<InvoicePrintInfo, "updatedAt">): Promise<InvoicePrintInfo> {
+  const { invoiceId, ...body } = info;
+  const { info: saved } = await call<{ info: InvoicePrintInfo }>(authedFetch, "PUT", `/api/business/custom-invoices/${invoiceId}`, body);
+  return saved;
+}
+
+/** Today's (or a timestamp's) LOCAL calendar date as "YYYY-MM-DD" — what a date input shows and a Custom Invoice stores. */
+export function toDateKey(ms: number = Date.now()): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
