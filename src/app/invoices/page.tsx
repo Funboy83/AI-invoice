@@ -9,7 +9,7 @@ import ChatFilterBanner from "@/components/ChatFilterBanner";
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import { isInvoiceIncomplete, isOpenDelivery, type Invoice, type Product, type Customer, type InvoiceLineItem } from "@/lib/types";
-import { Plus, X, Trash2, AlertTriangle, Truck } from "lucide-react";
+import { Plus, X, Trash2, AlertTriangle, Truck, CalendarDays } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
 import DeliveryBadge from "@/components/DeliveryBadge";
 
@@ -20,6 +20,34 @@ const statusStyles: Record<string, string> = {
   paid: "bg-emerald-100 text-emerald-700",
   void: "bg-red-100 text-red-700",
 };
+
+type DateRange = "all" | "today" | "month" | "day";
+
+/** Start/end (ms, local time) of the chosen date range; null = no date limit. */
+function rangeBounds(range: DateRange, day: string): { start: number; end: number } | null {
+  const now = new Date();
+  if (range === "today") {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return { start: start.getTime(), end: new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1).getTime() };
+  }
+  if (range === "month") {
+    return {
+      start: new Date(now.getFullYear(), now.getMonth(), 1).getTime(),
+      end: new Date(now.getFullYear(), now.getMonth() + 1, 1).getTime(),
+    };
+  }
+  if (range === "day" && day) {
+    const [y, m, d] = day.split("-").map(Number);
+    return { start: new Date(y, m - 1, d).getTime(), end: new Date(y, m - 1, d + 1).getTime() };
+  }
+  return null;
+}
+
+const rangeButtons: { key: Exclude<DateRange, "day">; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "today", label: "Today" },
+  { key: "month", label: "This month" },
+];
 
 interface DraftLine {
   productId: string;
@@ -47,8 +75,13 @@ function InvoicesPageContent() {
   const unpaidOnly = searchParams.get("status") === "unpaid";
   // /invoices?tag=delivery: delivery orders still waiting for their final prices.
   const deliveryOnly = searchParams.get("tag") === "delivery";
+  // Date filter on the invoice date: All (default), Today, This month, or one picked day.
+  const [dateRange, setDateRange] = useState<DateRange>("all");
+  const [pickedDay, setPickedDay] = useState("");
+  const bounds = rangeBounds(dateRange, pickedDay);
   const invoices = allInvoices.filter(
     (i) =>
+      (!bounds || (i.date >= bounds.start && i.date < bounds.end)) &&
       (!customerFilter || i.customerId === customerFilter) &&
       (!unpaidOnly || i.paymentStatus === "unpaid" || i.paymentStatus === "partial") &&
       (!deliveryOnly || isOpenDelivery(i))
@@ -56,6 +89,11 @@ function InvoicesPageContent() {
   const openDeliveries = allInvoices.filter(
     (i) => isOpenDelivery(i) && (!customerFilter || i.customerId === customerFilter)
   ).length;
+
+  // Summary for the shown invoices. Void invoices are listed but not counted in the money totals.
+  const counted = invoices.filter((i) => i.paymentStatus !== "void");
+  const shownTotal = counted.reduce((sum, i) => sum + i.total, 0);
+  const shownBalance = counted.reduce((sum, i) => sum + i.balance, 0);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -222,10 +260,63 @@ function InvoicesPageContent() {
         />
       )}
 
+      {/* Date filter + summary for the selected range */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl bg-slate-100 p-1">
+            {rangeButtons.map(({ key, label }) => (
+              <button
+                key={key}
+                onClick={() => {
+                  setDateRange(key);
+                  setPickedDay("");
+                }}
+                className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-colors ${
+                  dateRange === key ? "bg-white text-sky-700 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <label
+            className={`flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-sm ${
+              dateRange === "day" ? "border-sky-300 bg-sky-50 text-sky-700" : "border-slate-200 bg-white text-slate-600"
+            }`}
+          >
+            <CalendarDays size={15} />
+            <input
+              type="date"
+              value={pickedDay}
+              onChange={(e) => {
+                setPickedDay(e.target.value);
+                setDateRange(e.target.value ? "day" : "all");
+              }}
+              className="bg-transparent text-base md:text-sm focus:outline-none"
+              aria-label="Pick a day"
+            />
+          </label>
+        </div>
+        <div className="grid grid-cols-3 gap-2 md:gap-3">
+          <div className="rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-500 p-3 md:p-4 text-white shadow-sm">
+            <p className="text-[11px] md:text-xs font-medium uppercase tracking-wide text-white/80">Invoices</p>
+            <p className="mt-1 text-xl md:text-2xl font-semibold">{invoices.length}</p>
+          </div>
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 md:p-4">
+            <p className="text-[11px] md:text-xs font-medium uppercase tracking-wide text-emerald-700">Total</p>
+            <p className="mt-1 text-lg md:text-2xl font-semibold text-emerald-800">${shownTotal.toFixed(2)}</p>
+          </div>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 md:p-4">
+            <p className="text-[11px] md:text-xs font-medium uppercase tracking-wide text-amber-700">Still owed</p>
+            <p className="mt-1 text-lg md:text-2xl font-semibold text-amber-800">${shownBalance.toFixed(2)}</p>
+          </div>
+        </div>
+      </div>
+
       {/* Desktop table */}
-      <div className="hidden md:block rounded-2xl border border-slate-200 bg-white overflow-hidden">
+      <div className="hidden md:block rounded-2xl border border-slate-200 bg-white overflow-hidden shadow-sm">
         <table className="w-full text-sm">
-          <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+          <thead className="bg-sky-50/70 text-sky-900/70 text-xs uppercase">
             <tr>
               <th className="text-left px-5 py-3 font-medium">Number</th>
               <th className="text-left px-5 py-3 font-medium">Customer</th>
@@ -237,14 +328,16 @@ function InvoicesPageContent() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {invoices.map((inv) => (
-              <tr key={inv.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => router.push(`/invoices/${inv.id}`)}>
+              <tr key={inv.id} className="hover:bg-sky-50/50 cursor-pointer" onClick={() => router.push(`/invoices/${inv.id}`)}>
                 <td className="px-5 py-3 font-medium text-slate-900">
                   <Link href={`/invoices/${inv.id}`}>#{inv.invoiceNumber}</Link>
                 </td>
                 <td className="px-5 py-3 text-slate-700">{inv.customerName}</td>
                 <td className="px-5 py-3 text-slate-500">{new Date(inv.date).toLocaleDateString()}</td>
                 <td className="px-5 py-3 text-right text-slate-900 font-medium">${inv.total.toFixed(2)}</td>
-                <td className="px-5 py-3 text-right text-slate-700">${inv.balance.toFixed(2)}</td>
+                <td className={`px-5 py-3 text-right font-medium ${inv.balance > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+                  ${inv.balance.toFixed(2)}
+                </td>
                 <td className="px-5 py-3">
                   <span className={`text-[11px] uppercase font-medium px-2 py-0.5 rounded-full ${statusStyles[inv.paymentStatus]}`}>
                     {inv.paymentStatus}
@@ -265,7 +358,7 @@ function InvoicesPageContent() {
             {invoices.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-5 py-10 text-center text-slate-400">
-                  No invoices yet.
+                  {bounds ? "No invoices in this date range." : "No invoices yet."}
                 </td>
               </tr>
             )}
@@ -279,7 +372,9 @@ function InvoicesPageContent() {
           <Link
             key={inv.id}
             href={`/invoices/${inv.id}`}
-            className="block rounded-2xl border border-slate-200 bg-white p-4 active:bg-slate-50"
+            className={`block rounded-2xl border border-slate-200 border-l-4 bg-white p-4 shadow-sm active:bg-slate-50 ${
+              inv.paymentStatus === "void" ? "border-l-red-300" : inv.balance > 0 ? "border-l-amber-400" : "border-l-emerald-400"
+            }`}
           >
             <div className="flex items-center justify-between">
               <p className="font-medium text-slate-900">#{inv.invoiceNumber} · {inv.customerName}</p>
@@ -304,7 +399,9 @@ function InvoicesPageContent() {
             {inv.balance > 0 && <p className="text-xs text-amber-600 mt-1">Balance: ${inv.balance.toFixed(2)}</p>}
           </Link>
         ))}
-        {invoices.length === 0 && <p className="text-center text-sm text-slate-400 py-10">No invoices yet.</p>}
+        {invoices.length === 0 && (
+          <p className="text-center text-sm text-slate-400 py-10">{bounds ? "No invoices in this date range." : "No invoices yet."}</p>
+        )}
       </div>
 
       {modalOpen && (
