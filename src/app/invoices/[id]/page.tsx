@@ -11,6 +11,7 @@ import { isCommittedStatus, isInvoiceIncomplete, isOpenDelivery } from "@/lib/ty
 import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign, AlertTriangle, FileStack } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
 import DeliveryBadge from "@/components/DeliveryBadge";
+import { printPage } from "@/lib/printPage";
 
 const COMPANY_NAME = process.env.NEXT_PUBLIC_COMPANY_NAME || "Ngan";
 
@@ -208,7 +209,7 @@ export default function InvoiceDetailPage() {
         </button>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <button
-            onClick={() => window.print()}
+            onClick={() => void printPage()}
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             <Printer size={14} /> Print / PDF
