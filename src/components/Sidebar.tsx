@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, FileText, FileStack, Boxes, Users } from "lucide-react";
+import { LayoutDashboard, FileText, FileStack, Boxes, Users, ShoppingCart } from "lucide-react";
 import clsx from "clsx";
 
 // Each section has its own color so it is easy to tell apart at a glance.
@@ -12,6 +12,7 @@ const links = [
   { href: "/custom-invoices", label: "Custom Invoice", icon: FileStack, active: "bg-violet-50 text-violet-700", iconColor: "text-violet-500" },
   { href: "/products", label: "Products", icon: Boxes, active: "bg-amber-50 text-amber-700", iconColor: "text-amber-500" },
   { href: "/customers", label: "Customers", icon: Users, active: "bg-emerald-50 text-emerald-700", iconColor: "text-emerald-500" },
+  { href: "/purchases", label: "Buy from vendor", icon: ShoppingCart, active: "bg-rose-50 text-rose-700", iconColor: "text-rose-500", also: "/vendors" },
 ];
 
 export default function Sidebar() {
@@ -29,8 +30,8 @@ export default function Sidebar() {
         </div>
       </div>
       <nav className="flex-1 px-3 py-4 space-y-1">
-        {links.map(({ href, label, icon: Icon, active: activeClass, iconColor }) => {
-          const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+        {links.map(({ href, label, icon: Icon, active: activeClass, iconColor, also }) => {
+          const active = href === "/" ? pathname === "/" : pathname.startsWith(href) || (!!also && pathname.startsWith(also));
           return (
             <Link
               key={href}
