@@ -371,7 +371,9 @@ function CustomInvoiceContent() {
         )}
       </div>
 
-      <div className="hidden print:block">{preview}</div>
+      <div className="hidden print:block" data-print-root data-print-name={`invoice-${invoice.invoiceNumber}`}>
+        {preview}
+      </div>
     </>
   );
 }

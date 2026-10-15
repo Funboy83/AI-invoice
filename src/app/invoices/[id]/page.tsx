@@ -528,7 +528,7 @@ export default function InvoiceDetailPage() {
       </div>
 
       {/* Print-only classic invoice layout — kept separate from the screen UI above. */}
-      <div className="hidden print:block text-black">
+      <div className="hidden print:block text-black" data-print-root data-print-name={`invoice-${invoice.invoiceNumber}`}>
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">INVOICE</h1>
