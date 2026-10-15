@@ -4,7 +4,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { watchInvoices, watchProducts, watchCustomers } from "@/lib/store";
-import { createInvoiceApi, createCustomerApi, createProductApi, newOperationId } from "@/lib/businessApi";
+import { createInvoiceApi } from "@/lib/businessApi";
 import ChatFilterBanner from "@/components/ChatFilterBanner";
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
@@ -12,6 +12,8 @@ import { isInvoiceIncomplete, isOpenDelivery, type Invoice, type Product, type C
 import { Plus, X, Trash2, AlertTriangle, Truck, CalendarDays } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
 import DeliveryBadge from "@/components/DeliveryBadge";
+import CustomerFormModal from "@/components/CustomerFormModal";
+import ProductQuickAddModal from "@/components/ProductQuickAddModal";
 
 const statusStyles: Record<string, string> = {
   draft: "bg-slate-100 text-slate-600",
@@ -105,6 +107,9 @@ function InvoicesPageContent() {
   const [notes, setNotes] = useState("");
   const [isDelivery, setIsDelivery] = useState(false);
   const [lines, setLines] = useState<DraftLine[]>([]);
+  // Quick add opens a confirm popup (prefilled with the typed name); nothing is saved until OK there.
+  const [quickAddCustomer, setQuickAddCustomer] = useState<string | null>(null);
+  const [quickAddProduct, setQuickAddProduct] = useState<{ idx: number; name: string } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const createAction = useActionId(); // one stable id per open of the "New invoice" modal, reused across retries
@@ -151,18 +156,6 @@ function InvoicesPageContent() {
     setLines((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  async function handleCreateProductForLine(idx: number, name: string) {
-    const line = lines[idx];
-    // A one-shot quick-add (no retry affordance in this UI) — its own fresh id, independent of the invoice's own.
-    const product = await createProductApi(authedFetch, { name, defaultPrice: line?.price || 0, defaultUnit: "thùng" }, newOperationId());
-    updateLine(idx, { productId: product.id, productName: product.name, price: product.defaultPrice });
-  }
-
-  async function handleCreateCustomer(name: string) {
-    const customer = await createCustomerApi(authedFetch, { name }, newOperationId());
-    setCustomerId(customer.id);
-    setCustomerName(customer.name);
-  }
 
   async function handleCreate() {
     setError("");
@@ -431,7 +424,7 @@ function InvoicesPageContent() {
                     setCustomerId(c.id);
                     setCustomerName(c.name);
                   }}
-                  onCreateNew={handleCreateCustomer}
+                  onCreateNew={(name) => setQuickAddCustomer(name)}
                   placeholder="Tìm hoặc thêm khách hàng..."
                   createLabel="Thêm khách hàng mới"
                 />
@@ -458,7 +451,7 @@ function InvoicesPageContent() {
                         value={line.productName}
                         onQueryChange={(q) => updateLine(idx, { productId: "", productName: q })}
                         onSelect={(p) => updateLine(idx, { productId: p.id, productName: p.name, price: p.defaultPrice })}
-                        onCreateNew={(name) => handleCreateProductForLine(idx, name)}
+                        onCreateNew={(name) => setQuickAddProduct({ idx, name })}
                         placeholder="Tìm hoặc thêm sản phẩm..."
                         createLabel="Thêm sản phẩm mới"
                       />
@@ -558,6 +551,27 @@ function InvoicesPageContent() {
             </div>
           </div>
         </div>
+      )}
+
+      {quickAddCustomer !== null && (
+        <CustomerFormModal
+          initialName={quickAddCustomer}
+          onCreated={(c) => {
+            setCustomerId(c.id);
+            setCustomerName(c.name);
+          }}
+          onClose={() => setQuickAddCustomer(null)}
+        />
+      )}
+      {quickAddProduct && (
+        <ProductQuickAddModal
+          initialName={quickAddProduct.name}
+          initialPrice={lines[quickAddProduct.idx]?.price}
+          onCreated={(p) =>
+            updateLine(quickAddProduct.idx, { productId: p.id, productName: p.name, price: p.defaultPrice })
+          }
+          onClose={() => setQuickAddProduct(null)}
+        />
       )}
     </div>
   );

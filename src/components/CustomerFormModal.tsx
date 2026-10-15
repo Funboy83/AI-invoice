@@ -47,19 +47,34 @@ function formFor(c: Customer): FormState {
 }
 
 /**
- * Add / edit customer form, shared by the customers list ("Add customer") and the customer page ("Edit").
+ * Add / edit customer form, shared by the customers list ("Add customer"), the customer page ("Edit") and the invoice
+ * form's quick add ("Thêm khách hàng mới"), where it opens prefilled with the typed name so it can be checked first.
  * Render it only while open: each mount is one new save action, so its operationId stays stable across retries of
  * THIS save (a lost-response retry can't create a second customer) and is fresh for the next open.
  */
-export default function CustomerFormModal({ customer, onClose }: { customer?: Customer; onClose: () => void }) {
+export default function CustomerFormModal({
+  customer,
+  initialName,
+  onCreated,
+  onClose,
+}: {
+  customer?: Customer;
+  /** Prefills the name of a new customer (quick add from the invoice form). */
+  initialName?: string;
+  /** Called with the saved customer after a successful create, before onClose. */
+  onCreated?: (customer: Customer) => void;
+  onClose: () => void;
+}) {
   const { authedFetch } = useAppAuth();
-  const [form, setForm] = useState<FormState>(() => (customer ? formFor(customer) : emptyForm));
+  const [form, setForm] = useState<FormState>(() =>
+    customer ? formFor(customer) : { ...emptyForm, name: initialName ?? "" }
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [operationId] = useState(newOperationId);
 
   async function handleSave() {
-    if (!form.name) return;
+    if (!form.name.trim()) return setError("Name is required.");
     setSaving(true);
     setError("");
     const aliases = form.aliases
@@ -68,7 +83,7 @@ export default function CustomerFormModal({ customer, onClose }: { customer?: Cu
       .filter(Boolean);
     try {
       const shared = {
-        name: form.name,
+        name: form.name.trim(),
         contactName: form.contactName,
         email: form.email,
         phone: form.phone,
@@ -80,7 +95,8 @@ export default function CustomerFormModal({ customer, onClose }: { customer?: Cu
       if (form.id) {
         await updateCustomerApi(authedFetch, form.id, shared, operationId);
       } else {
-        await createCustomerApi(authedFetch, { ...shared, aliases }, operationId);
+        const created = await createCustomerApi(authedFetch, { ...shared, aliases }, operationId);
+        onCreated?.(created);
       }
       onClose();
     } catch (e) {
@@ -91,7 +107,7 @@ export default function CustomerFormModal({ customer, onClose }: { customer?: Cu
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30">
+    <div className="fixed inset-0 z-[60] flex items-end md:items-center justify-center bg-black/30">
       <div className="w-full md:max-w-md rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-slate-900">{form.id ? "Edit customer" : "Add customer"}</h2>
@@ -193,7 +209,7 @@ export default function CustomerFormModal({ customer, onClose }: { customer?: Cu
             disabled={saving}
             className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Saving…" : onCreated ? "OK" : "Save"}
           </button>
         </div>
       </div>
