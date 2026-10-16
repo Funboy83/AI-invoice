@@ -52,7 +52,7 @@ export const toolDefinitions = [
   {
     name: "createProduct",
     description:
-      "Create a new product. Only call this after searchProduct shows no good match, or after the user explicitly confirms they want a new, separate product despite similar existing ones. Set force=true only after that explicit confirmation.",
+      "Create a new product. Only call this after searchProduct shows no good match, or after the user explicitly confirms they want a new, separate product despite similar existing ones. Set force=true only after that explicit confirmation. In the chat nothing is saved on the first call: it returns needs_confirmation with a preview — show it, ask with requestUserInput (use the confirmChoices as options), and call again with confirmed=true only after she answers OK.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -66,6 +66,7 @@ export const toolDefinitions = [
         barcode: { type: "string" },
         notes: { type: "string" },
         force: { type: "boolean" },
+        confirmed: { type: "boolean", description: "Set true only after the user confirmed the preview in reply to your question." },
       },
       required: ["name", "defaultPrice"],
     },
@@ -121,7 +122,7 @@ export const toolDefinitions = [
   {
     name: "createCustomer",
     description:
-      "Create a new customer. Only call after searchCustomer shows no good match, or after explicit user confirmation despite similar existing customers (force=true).",
+      "Create a new customer. Only call after searchCustomer shows no good match, or after explicit user confirmation despite similar existing customers (force=true). Nothing is saved on the first call: it returns needs_confirmation with a preview — show it, ask with requestUserInput (use the confirmChoices as options), and call again with confirmed=true only after she answers OK.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -135,6 +136,7 @@ export const toolDefinitions = [
         notes: { type: "string" },
         defaultShipping: { type: "number" },
         force: { type: "boolean" },
+        confirmed: { type: "boolean", description: "Set true only after the user confirmed the preview in reply to your question." },
       },
       required: ["name"],
     },
@@ -485,6 +487,25 @@ export interface ToolContext {
   previewOnly?: boolean;
   /** Optional timing hook (phase name, ms, counts). Must never receive order text, names or other customer data. */
   trace?: (phase: string, ms: number, fields?: Record<string, number>) => void;
+}
+
+/**
+ * A new customer/product from the chat is saved only once she has seen what will be created and said OK: the call must
+ * be in her reply to the AI's question (canConfirm) and carry confirmed=true (or force=true, her "create a new one"
+ * answer to the similar-record question). Typos in a quick "thêm khách X" used to go straight into the list.
+ */
+function isConfirmedCreate(args: ToolArgs, ctx: ToolContext): boolean {
+  return Boolean(ctx.canConfirm) && (args.confirmed === true || args.force === true);
+}
+
+function createConfirmation(kind: "customer" | "product", preview: Record<string, unknown>) {
+  const label = kind === "customer" ? "khách hàng" : "sản phẩm";
+  return {
+    status: "needs_confirmation",
+    message: `Nothing saved yet. Show the user this new ${kind} (every field in the preview) and ask with requestUserInput whether to save it, using confirmChoices as the options. If she says OK, call again with the same details and confirmed=true. If she wants changes, apply them and show the preview again. If she cancels, save nothing.`,
+    preview,
+    confirmChoices: [`OK, lưu ${label}`, "Sửa lại", "Hủy"],
+  };
 }
 
 /** Ledger-friendly id for one tool call: the same (job, tool_use id) always maps to the same operation. */
@@ -990,6 +1011,18 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
         }
       }
       if (ctx.previewOnly) return productCreatePreview(args);
+      if (ctx.channel !== "api" && !isConfirmedCreate(args, ctx)) {
+        return createConfirmation("product", {
+          name: name_,
+          aliases: (args.aliases as string[]) ?? [],
+          defaultUnit: args.defaultUnit ? String(args.defaultUnit) : "unit",
+          defaultPrice: Number(args.defaultPrice),
+          ...(args.cost !== undefined ? { cost: Number(args.cost) } : {}),
+          ...(args.quantity !== undefined ? { quantity: Number(args.quantity) } : {}),
+          ...(args.category ? { category: String(args.category) } : {}),
+          ...(args.notes ? { notes: String(args.notes) } : {}),
+        });
+      }
       const product = await createProductDoc({
         name: name_,
         aliases: (args.aliases as string[]) ?? [],
@@ -1048,6 +1081,19 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
             ...(check.status === "match" ? { candidates: [summarizeCustomer(check.customer)] } : { candidates: check.candidates }),
           };
         }
+      }
+      if (!isConfirmedCreate(args, ctx)) {
+        return createConfirmation("customer", {
+          name: name_,
+          aliases: (args.aliases as string[]) ?? [],
+          ...(args.contactName ? { contactName: String(args.contactName) } : {}),
+          ...(args.phone ? { phone: String(args.phone) } : {}),
+          ...(args.email ? { email: String(args.email) } : {}),
+          ...(args.address ? { address: String(args.address) } : {}),
+          ...(args.shippingAddress ? { shippingAddress: String(args.shippingAddress) } : {}),
+          ...(args.notes ? { notes: String(args.notes) } : {}),
+          ...(args.defaultShipping !== undefined ? { defaultShipping: Number(args.defaultShipping) } : {}),
+        });
       }
       const customer = await createCustomerDoc({
         name: name_,
