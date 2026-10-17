@@ -10,7 +10,7 @@ import CustomerPaymentModal from "@/components/CustomerPaymentModal";
 import PaymentHistory from "@/components/PaymentHistory";
 import DeliveryBadge from "@/components/DeliveryBadge";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
-import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
+import { useAppAuth } from "@/lib/useAppAuth";
 import type { Customer, Invoice, Payment } from "@/lib/types";
 import { ArrowLeft, Pencil, Phone, ChevronRight, DollarSign, FileText } from "lucide-react";
 
@@ -20,7 +20,7 @@ type Tab = "unpaid" | "paid" | "all";
 export default function CustomerDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { notifyPossibleRevocation } = useAppAuth();
+  const { reportListenerError } = useAppAuth();
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [tab, setTab] = useState<Tab>("unpaid");
@@ -29,7 +29,7 @@ export default function CustomerDetailPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
 
   useEffect(() => {
-    const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
+    const onErr = reportListenerError;
     const u1 = watchCustomers(setCustomers, onErr);
     const u2 = watchInvoicesForCustomer(id, setInvoices, onErr);
     const u3 = watchPaymentsForCustomer(id, setPayments, onErr);
@@ -38,7 +38,7 @@ export default function CustomerDetailPage() {
       u2();
       u3();
     };
-  }, [id, notifyPossibleRevocation]);
+  }, [id, reportListenerError]);
 
   const customer = customers?.find((c) => c.id === id);
   const summary = useMemo(() => summarizeCustomerInvoices(invoices ?? []), [invoices]);

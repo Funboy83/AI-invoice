@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut as firebaseSignOut, type User } from "firebase/auth";
 import { getClientAuth } from "./firebase";
 
@@ -30,6 +30,14 @@ interface AppAuth {
    * revoked. Triggers an immediate re-check instead of waiting for the slower background poll.
    */
   notifyPossibleRevocation(): void;
+  /**
+   * The error handler for every live Firestore listener on a business page. permission-denied → re-check access
+   * (as notifyPossibleRevocation); anything else (offline, quota, server error) → `loadError`, so the page shows
+   * a message instead of silently staying empty. A failed listener stops for good, so the fix offered is a reload.
+   */
+  reportListenerError(err: unknown): void;
+  /** Set when a listener failed for a reason other than permission-denied; RequireAuth shows it with a Reload button. */
+  loadError: string | null;
 }
 
 const Ctx = createContext<AppAuth | null>(null);
@@ -45,11 +53,20 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<{ uid: string; conversationId: string; email: string } | null>(null);
   const [denied, setDenied] = useState<{ uid: string; reason: string } | null>(null);
   const [checkTick, setCheckTick] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const lastUid = useRef<string | null>(null);
 
   const uid = user?.uid ?? null;
 
   useEffect(() => {
     return onAuthStateChanged(getClientAuth(), (u) => {
+      // Firestore keeps downloaded business data in memory while the app is open (see firebase.ts). On sign-out or
+      // a switch to another account, reload the page so that memory is wiped and the next account starts clean.
+      if (lastUid.current && lastUid.current !== (u?.uid ?? null)) {
+        window.location.reload();
+        return;
+      }
+      lastUid.current = u?.uid ?? null;
       setUser(u);
       setAuthReady(true);
     });
@@ -107,6 +124,19 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
     };
   }, [uid, recheck]);
 
+  const reportListenerError = useCallback(
+    (err: unknown) => {
+      if (isPermissionDenied(err)) {
+        recheck();
+        return;
+      }
+      const code = typeof err === "object" && err !== null && "code" in err ? String((err as { code?: unknown }).code) : "";
+      console.error("Firestore listener failed", err);
+      setLoadError(code ? `Couldn't load your data (${code}).` : "Couldn't load your data.");
+    },
+    [recheck],
+  );
+
   const signIn = useCallback(async (email: string, password: string) => {
     try {
       await signInWithEmailAndPassword(getClientAuth(), email.trim(), password);
@@ -147,6 +177,8 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
     signOut,
     authedFetch,
     notifyPossibleRevocation: recheck,
+    reportListenerError,
+    loadError,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

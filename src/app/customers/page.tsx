@@ -7,7 +7,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import ChatFilterBanner from "@/components/ChatFilterBanner";
 import CustomerFormModal from "@/components/CustomerFormModal";
 import { owedByCustomer } from "@/lib/customerInvoices";
-import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
+import { useAppAuth } from "@/lib/useAppAuth";
 import type { Customer, Invoice } from "@/lib/types";
 import { Plus, ChevronRight, Search } from "lucide-react";
 
@@ -26,7 +26,7 @@ export default function CustomersPage() {
 
 function CustomersPageContent() {
   const router = useRouter();
-  const { notifyPossibleRevocation } = useAppAuth();
+  const { reportListenerError } = useAppAuth();
   const [allCustomers, setCustomers] = useState<Customer[]>([]);
   // Opened from a chat shortcut (/customers?id=…): show just that customer.
   const focusId = useSearchParams().get("id");
@@ -37,14 +37,14 @@ function CustomersPageContent() {
   const [owingOnly, setOwingOnly] = useState(false);
 
   useEffect(() => {
-    const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
+    const onErr = reportListenerError;
     const u1 = watchCustomers(setCustomers, onErr);
     const u2 = watchInvoices(setInvoices, onErr);
     return () => {
       u1();
       u2();
     };
-  }, [notifyPossibleRevocation]);
+  }, [reportListenerError]);
 
   const owed = useMemo(() => owedByCustomer(allInvoices), [allInvoices]);
   const q = normalizeSearch(search);
