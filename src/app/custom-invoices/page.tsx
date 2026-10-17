@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Search, Printer, Pencil } from "lucide-react";
 import { watchInvoices } from "@/lib/store";
-import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
+import { useAppAuth } from "@/lib/useAppAuth";
 import { findSimilar } from "@/lib/similarity";
 import { isCommittedStatus, type Invoice } from "@/lib/types";
 
@@ -14,7 +14,7 @@ import { isCommittedStatus, type Invoice } from "@/lib/types";
  * chosen. Drafts and voided invoices aren't listed — they aren't real sales to print.
  */
 export default function CustomInvoicesPage() {
-  const { notifyPossibleRevocation } = useAppAuth();
+  const { reportListenerError } = useAppAuth();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [query, setQuery] = useState("");
 
@@ -22,9 +22,9 @@ export default function CustomInvoicesPage() {
     () =>
       watchInvoices(
         (all) => setInvoices(all.filter((i) => isCommittedStatus(i.paymentStatus))),
-        (err) => isPermissionDenied(err) && notifyPossibleRevocation(),
+        reportListenerError,
       ),
-    [notifyPossibleRevocation],
+    [reportListenerError],
   );
 
   const q = query.trim();

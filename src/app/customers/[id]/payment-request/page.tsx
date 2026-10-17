@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, Printer } from "lucide-react";
 import { watchCustomers, watchInvoicesForCustomer } from "@/lib/store";
 import { isOpenInvoice, isStatementInvoice, statementOwed, statementTotals } from "@/lib/customerInvoices";
-import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
+import { useAppAuth } from "@/lib/useAppAuth";
 import { printPage } from "@/lib/printPage";
 import { money } from "@/components/customInvoice/shared";
 import StatementPrint from "@/components/StatementPrint";
@@ -26,7 +26,7 @@ const statusStyles: Record<string, string> = {
  */
 export default function PaymentRequestPage() {
   const { id } = useParams<{ id: string }>();
-  const { notifyPossibleRevocation } = useAppAuth();
+  const { reportListenerError } = useAppAuth();
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -35,14 +35,14 @@ export default function PaymentRequestPage() {
   const [printedAt] = useState(() => Date.now());
 
   useEffect(() => {
-    const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
+    const onErr = reportListenerError;
     const u1 = watchCustomers(setCustomers, onErr);
     const u2 = watchInvoicesForCustomer(id, setInvoices, onErr);
     return () => {
       u1();
       u2();
     };
-  }, [id, notifyPossibleRevocation]);
+  }, [id, reportListenerError]);
 
   // Oldest first, the order to chase them in. Drafts and voids never go on a payment request.
   const listed = useMemo(

@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { watchProducts } from "@/lib/store";
 import { newOperationId, toDateKey } from "@/lib/businessApi";
 import { createPurchaseApi, getVendorsApi, money } from "@/lib/purchaseApi";
-import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
+import { useAppAuth } from "@/lib/useAppAuth";
 import SearchCombobox from "@/components/SearchCombobox";
 import VendorFormModal from "@/components/VendorFormModal";
 import type { Product, Vendor } from "@/lib/types";
@@ -37,7 +37,7 @@ export default function NewPurchasePage() {
 function NewPurchaseForm() {
   const router = useRouter();
   const presetVendor = useSearchParams().get("vendor") ?? "";
-  const { authedFetch, notifyPossibleRevocation } = useAppAuth();
+  const { authedFetch, reportListenerError } = useAppAuth();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
 
@@ -72,7 +72,7 @@ function NewPurchaseForm() {
       .catch((e) => setError(e instanceof Error ? e.message : "Could not load vendors."));
   }, [authedFetch, presetVendor]);
 
-  useEffect(() => watchProducts((ps) => setProducts(ps.filter((p) => p.active)), (err) => isPermissionDenied(err) && notifyPossibleRevocation()), [notifyPossibleRevocation]);
+  useEffect(() => watchProducts((ps) => setProducts(ps.filter((p) => p.active)), reportListenerError), [reportListenerError]);
 
   const productById = new Map(products.map((p) => [p.id, p]));
   const updateLine = (key: string, patch: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));

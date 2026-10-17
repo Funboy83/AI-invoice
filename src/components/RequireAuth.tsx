@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode } from "react";
-import { Loader2, ShieldAlert, LogOut } from "lucide-react";
+import { Loader2, ShieldAlert, LogOut, AlertTriangle } from "lucide-react";
 import { useAppAuth } from "@/lib/useAppAuth";
 import ChatSignIn from "./ChatSignIn";
 
@@ -13,7 +13,7 @@ import ChatSignIn from "./ChatSignIn";
  * without passing through "loading" first, React would still fully remount rather than reuse stale state.
  */
 export default function RequireAuth({ children }: { children: ReactNode }) {
-  const { authState, uid, email, deniedReason, signOut } = useAppAuth();
+  const { authState, uid, email, deniedReason, signOut, loadError } = useAppAuth();
 
   // RequireAuth sits directly inside <body className="flex">, alongside Sidebar/BottomNav (see layout.tsx), and
   // wraps <main className="flex-1 …"> — every branch below needs the SAME "flex-1 min-w-0" sizing that <main>
@@ -62,6 +62,18 @@ export default function RequireAuth({ children }: { children: ReactNode }) {
   // direct children of body, exactly as before RequireAuth existed.
   return (
     <div key={uid} className="contents">
+      {loadError && (
+        <div className="fixed inset-x-3 top-3 z-50 mx-auto flex max-w-md items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 shadow-lg print:hidden">
+          <AlertTriangle size={18} className="shrink-0 text-red-600" />
+          <p className="flex-1 text-sm text-red-800">{loadError} Check your internet, then tap Reload.</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+          >
+            Reload
+          </button>
+        </div>
+      )}
       {children}
     </div>
   );

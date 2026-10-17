@@ -7,7 +7,7 @@ import { watchCustomers, watchInvoicesForCustomer } from "@/lib/store";
 import { daysSince, summarizeCustomerInvoices } from "@/lib/customerInvoices";
 import CustomerFormModal from "@/components/CustomerFormModal";
 import DeliveryBadge from "@/components/DeliveryBadge";
-import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
+import { useAppAuth } from "@/lib/useAppAuth";
 import type { Customer, Invoice } from "@/lib/types";
 import { ArrowLeft, Pencil, Phone, ChevronRight, FileText } from "lucide-react";
 
@@ -25,21 +25,21 @@ type Tab = "unpaid" | "paid" | "all";
 export default function CustomerDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { notifyPossibleRevocation } = useAppAuth();
+  const { reportListenerError } = useAppAuth();
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [tab, setTab] = useState<Tab>("unpaid");
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
-    const onErr = (err: unknown) => isPermissionDenied(err) && notifyPossibleRevocation();
+    const onErr = reportListenerError;
     const u1 = watchCustomers(setCustomers, onErr);
     const u2 = watchInvoicesForCustomer(id, setInvoices, onErr);
     return () => {
       u1();
       u2();
     };
-  }, [id, notifyPossibleRevocation]);
+  }, [id, reportListenerError]);
 
   const customer = customers?.find((c) => c.id === id);
   const summary = useMemo(() => summarizeCustomerInvoices(invoices ?? []), [invoices]);
