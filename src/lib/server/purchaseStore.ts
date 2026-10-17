@@ -139,18 +139,25 @@ export async function getPaymentsForPurchase(purchaseId: string): Promise<Vendor
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as VendorPayment).sort((a, b) => b.createdAt - a.createdAt);
 }
 
+/** The other (not cancelled) purchase from this vendor that already uses this vendor invoice number, if any. */
+export async function findVendorInvoiceClash(vendorId: string, vendorInvoiceNumber: string, exceptPurchaseId?: string): Promise<Purchase | null> {
+  const wanted = normalizeVendorInvoiceNumber(vendorInvoiceNumber);
+  if (!wanted) return null;
+  const snap = await purchasesCol().where("vendorId", "==", vendorId).get();
+  return (
+    snap.docs
+      .map((d) => hydratePurchase(d.id, d.data()))
+      .find((p) => p.id !== exceptPurchaseId && p.paymentStatus !== "void" && normalizeVendorInvoiceNumber(p.vendorInvoiceNumber) === wanted) ?? null
+  );
+}
+
 /**
  * Refuses a vendor invoice number already used on another (not cancelled) purchase from the same vendor, so the
  * same bill can't be entered twice by accident. Runs as a plain read inside the transaction body, which only runs
  * for a NEW operation: a retry of the same Save replays its saved result instead of tripping over itself.
  */
 async function assertVendorInvoiceNumberFree(vendorId: string, vendorInvoiceNumber: string, exceptPurchaseId?: string): Promise<void> {
-  const wanted = normalizeVendorInvoiceNumber(vendorInvoiceNumber);
-  if (!wanted) return;
-  const snap = await purchasesCol().where("vendorId", "==", vendorId).get();
-  const clash = snap.docs
-    .map((d) => hydratePurchase(d.id, d.data()))
-    .find((p) => p.id !== exceptPurchaseId && p.paymentStatus !== "void" && normalizeVendorInvoiceNumber(p.vendorInvoiceNumber) === wanted);
+  const clash = await findVendorInvoiceClash(vendorId, vendorInvoiceNumber, exceptPurchaseId);
   if (clash) {
     throw new DomainError(`Vendor invoice #${vendorInvoiceNumber} from this vendor is already saved as ${clash.purchaseNumber}.`);
   }
