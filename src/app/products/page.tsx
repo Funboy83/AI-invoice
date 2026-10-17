@@ -19,6 +19,9 @@ interface FormState {
   cost: string;
   /** Blank = stock untracked for this product; invoicing never reads/adjusts it. */
   quantity: string;
+  /** Stock when the edit form opened: saving sends quantity only if the person changed it, so a sale made
+   *  while the form was open is never overwritten with the older number. */
+  startQuantity: string;
   category: string;
   barcode: string;
   notes: string;
@@ -32,6 +35,7 @@ const emptyForm: FormState = {
   defaultPrice: "",
   cost: "",
   quantity: "",
+  startQuantity: "",
   category: "",
   barcode: "",
   notes: "",
@@ -87,6 +91,7 @@ function ProductsPageContent() {
       defaultPrice: String(p.defaultPrice),
       cost: p.cost !== undefined ? String(p.cost) : "",
       quantity: p.quantity !== undefined ? String(p.quantity) : "",
+      startQuantity: p.quantity !== undefined ? String(p.quantity) : "",
       category: p.category ?? "",
       barcode: p.barcode ?? "",
       notes: p.notes ?? "",
@@ -115,7 +120,7 @@ function ProductsPageContent() {
             defaultUnit: form.defaultUnit,
             defaultPrice: Number(form.defaultPrice),
             cost: form.cost ? Number(form.cost) : undefined,
-            quantity: form.quantity !== "" ? Number(form.quantity) : undefined,
+            quantity: form.quantity !== "" && form.quantity !== form.startQuantity ? Number(form.quantity) : undefined,
             category: form.category,
             notes: form.notes,
             active: form.active,
@@ -212,7 +217,7 @@ function ProductsPageContent() {
                 </td>
                 <td className="px-5 py-3 text-right text-slate-900">${p.defaultPrice.toFixed(2)}</td>
                 <td className="px-5 py-3 text-slate-500">{p.defaultUnit}</td>
-                <td className={`px-5 py-3 text-right ${p.quantity !== undefined && p.quantity < 0 ? "text-red-600 font-medium" : "text-slate-500"}`}>
+                <td className={`px-5 py-3 text-right font-medium ${p.quantity !== undefined && p.quantity < 0 ? "text-red-600" : "text-slate-900"}`}>
                   {p.quantity !== undefined ? p.quantity : <span className="text-xs text-slate-400">Not counted</span>}
                 </td>
                 <td className="px-5 py-3 text-slate-500">{p.category || "—"}</td>
@@ -253,7 +258,7 @@ function ProductsPageContent() {
               {p.defaultUnit}
               {p.category ? ` · ${p.category}` : ""}
               {p.quantity !== undefined ? (
-                <span className={p.quantity < 0 ? "text-red-600 font-medium" : undefined}> · stock: {p.quantity}</span>
+                <span className={`font-medium ${p.quantity < 0 ? "text-red-600" : "text-slate-700"}`}> · stock: {p.quantity}</span>
               ) : (
                 <span className="text-slate-400"> · stock: not counted</span>
               )}
