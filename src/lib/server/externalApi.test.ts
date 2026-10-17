@@ -76,22 +76,29 @@ describe("who may call", () => {
 });
 
 describe("what an outside AI can do", () => {
-  it("offers read tools, the create tools, product create/edit and confirmAction — never payments or invoice edits", () => {
+  it("offers everything the app can do, every write behind confirmAction, and no delete or chat-only tool", () => {
     const names = externalTools.map((t) => t.name);
     expect(names).toEqual(
-      expect.arrayContaining(["searchCustomer", "getCustomerDebt", "getDeliveries", "createInvoiceDraft", "createDeliveryOrder", "createProduct", "updateProduct", "addProductAlias", "confirmAction"])
+      expect.arrayContaining([
+        "searchCustomer", "getCustomerDebt", "getDeliveries", "createInvoiceDraft", "createDeliveryOrder", "createProduct", "updateProduct",
+        "addProductAlias", "recordPayment", "updateInvoice", "convertDelivery", "createCustomer", "updateCustomer", "addInvoiceItem",
+        "listVendors", "createVendor", "updateVendor", "createPurchase", "searchPurchases", "getPurchase", "recordVendorPayment",
+        "updatePurchaseInfo", "cancelPurchase", "getPaymentRequest", "getCustomInvoice", "saveCustomInvoice", "listInvoices",
+        "recordCustomerPayment", "adjustCustomerDebt", "changePayment",
+        "getStoreSummary", "getInvoiceHistory", "confirmAction",
+      ])
     );
-    for (const banned of ["recordPayment", "updateInvoice", "convertDelivery", "createCustomer", "updateCustomer", "addInvoiceItem", "requestUserInput"]) {
-      expect(names).not.toContain(banned);
+    for (const banned of ["requestUserInput", "deleteProduct", "deleteInvoice"]) expect(names).not.toContain(banned);
+    for (const t of externalTools) {
+      expect((t.inputSchema.properties as Record<string, unknown> | undefined)?.confirmed).toBeUndefined();
+      expect(t.description).not.toMatch(/requestUserInput/);
+      if (!t.readOnly && t.name !== "confirmAction") expect(t.description).toMatch(/only PREVIEWS/);
     }
-    const delivery = externalTools.find((t) => t.name === "createDeliveryOrder")!;
-    expect((delivery.inputSchema.properties as Record<string, unknown>).confirmed).toBeUndefined();
   });
 
   it("refuses a tool that isn't on the list, even if the chat has it", async () => {
-    const res = await run("recordPayment", { invoiceId: "x", amount: 5 });
+    const res = await run("requestUserInput", { question: "x" });
     expect(res.status).toBe("error");
-    expect(store.count("payments")).toBe(0);
   });
 
   it("runs read tools on the shared tool layer", async () => {

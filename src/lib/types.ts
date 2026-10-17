@@ -197,3 +197,82 @@ export interface CustomInvoiceDefaults {
   from: PrintParty;
   terms: string;
 }
+
+/* ------------------------------ Buying from vendors ------------------------------ */
+
+/** A supplier the store buys stock from — the mirror of Customer on the buying side. */
+export interface Vendor {
+  id: string;
+  name: string;
+  contactName?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  notes?: string;
+  active: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** One product line on a purchase: what was bought, how many, and what each one cost. */
+export interface PurchaseLine {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unit: string;
+  cost: number;
+  lineTotal: number;
+}
+
+/** unpaid/partial/paid come from amountPaid vs total; void = cancelled (its stock was taken back out). */
+export type PurchaseStatus = "unpaid" | "partial" | "paid" | "void";
+
+/**
+ * A purchase (purchase order) from a vendor. Saving one ADDS its quantities to product stock; cancelling it takes
+ * exactly those quantities back out. `addedQuantities` is the record of what this purchase added, so a cancel never
+ * depends on (possibly since-changed) line items.
+ */
+export interface Purchase {
+  id: string;
+  /** Our own number, e.g. "PO-1001". */
+  purchaseNumber: string;
+  vendorId: string;
+  vendorName: string;
+  /** The number printed on the vendor's own invoice/receipt — searchable. Empty when not given. */
+  vendorInvoiceNumber: string;
+  /** Purchase date as "YYYY-MM-DD" (the store's calendar day, independent of time zones). */
+  dateKey: string;
+  items: PurchaseLine[];
+  /** Shipping or other fees charged by the vendor. */
+  shipping: number;
+  discount: number;
+  subtotal: number;
+  total: number;
+  amountPaid: number;
+  balance: number;
+  paymentStatus: PurchaseStatus;
+  notes: string;
+  /** True when saving this purchase also set each product's cost to the price paid here. */
+  updatedCost: boolean;
+  addedQuantities: { productId: string; quantity: number }[];
+  createdAt: number;
+  updatedAt: number;
+  voidedAt?: number;
+}
+
+/** Money paid to a vendor against one purchase. Cancelling the purchase marks its payments as voided (kept for history). */
+export interface VendorPayment {
+  id: string;
+  purchaseId: string;
+  vendorId: string;
+  amount: number;
+  method: string;
+  note: string;
+  createdAt: number;
+  voided?: boolean;
+}
+
+/** What is still owed on a purchase: only unpaid/partial purchases count; cancelled ones never do. */
+export function purchaseOwed(p: Pick<Purchase, "paymentStatus" | "balance">): number {
+  return p.paymentStatus === "unpaid" || p.paymentStatus === "partial" ? p.balance : 0;
+}

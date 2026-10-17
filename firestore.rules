@@ -65,5 +65,10 @@ service cloud.firestore {
     // Custom Invoice print info and its defaults: read and written only through /api/business/custom-invoices.
     match /invoicePrintInfo/{id} { allow read, write: if false; }
     match /settings/{id}          { allow read, write: if false; }
+    // Buying from vendors: read and written only through /api/business/vendors and /api/business/purchases
+    // (server, Admin SDK). Same as Firestore's default deny; listed so it's clear nothing here is browser-readable.
+    match /vendors/{id}        { allow read, write: if false; }
+    match /purchases/{id}      { allow read, write: if false; }
+    match /vendorPayments/{id} { allow read, write: if false; }
   }
 }

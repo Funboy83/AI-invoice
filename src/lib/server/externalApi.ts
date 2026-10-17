@@ -3,7 +3,9 @@ import { getAdminDb } from "./firebaseAdmin";
 import { HttpError, currentStoreId, type AuthedUser } from "./auth";
 import { memberByEmail } from "./membership";
 import { executeTool, toolDefinitions } from "@/lib/ai/tools";
+import { adminToolDefinitions, adminToolNames, runAdminTool } from "./adminTools";
 import { getAllCustomers } from "./businessStore";
+import { getPurchase, getVendor } from "./purchaseStore";
 import { workerBaseUrl } from "./dispatch";
 
 /**
@@ -14,13 +16,16 @@ import { workerBaseUrl } from "./dispatch";
  * Off unless AI_API_ENABLED=true. Who may use it: AI_API_KEYS = "appLoginEmail:secretKey, …" — each key belongs to an
  * existing app member (storeMembers), checked live on every call, so removing the member also cuts off the key.
  *
- * What it can do (narrow on purpose — docs/OPERATING_POLICY.md rule 5, "new surfaces start narrow"):
- *   - read: search/get customers, products, invoices, debt, unpaid list, deliveries, payments, last price;
- *   - create an invoice draft or a delivery order, and create or edit a product (incl. adding a nickname), in two
- *     steps: the call only PREVIEWS (nothing is saved) and returns a one-time confirm token; `confirmAction` with
- *     that token saves exactly what was previewed.
- * Not exposed: payments, editing or voiding invoices, converting deliveries (price changes), deleting products,
- * creating or changing customers. Those stay in the app until each gets its own approval step.
+ * What it can do: everything the app's own pages can do, like an admin (the owner asked for this on 2026-10-17;
+ * docs/OPERATING_POLICY.md rule 5 records it). Reads run straight away. EVERY write (orders, invoice edits and voids,
+ * delivery pricing, customer and vendor payments, customers, products, vendors, purchases, cancelling a purchase,
+ * Custom Invoice info) goes in two steps: the call only PREVIEWS (nothing is saved) and returns a one-time confirm
+ * token; `confirmAction` with that token saves exactly what was previewed, through the same store functions the app
+ * uses, so its rules (totals, no overpaying, duplicate vendor invoice #, stock) still apply.
+ * Never exposed: permanently deleting anything (the app has no delete either), and the chat-only requestUserInput.
+ *
+ * RULE FOR NEW FEATURES: a feature that adds something people can do in the app ships with its tools here
+ * (see CONTRIBUTING.md), or outside AI apps silently can't do it.
  */
 
 export interface ApiConfig {
@@ -103,11 +108,27 @@ const READ_TOOLS = [
   "searchPayments",
 ] as const;
 
-/** Order tools that go through preview → confirmAction. */
-const ORDER_TOOLS = ["createInvoiceDraft", "createDeliveryOrder"] as const;
-/** Product tools that go through preview → confirmAction. A product's price change never touches past invoices. */
-const PRODUCT_TOOLS = ["createProduct", "updateProduct", "addProductAlias"] as const;
-const CONFIRM_TOOLS: readonly string[] = [...ORDER_TOOLS, ...PRODUCT_TOOLS];
+/** Chat tools that change data: outside apps get them through preview → confirmAction. */
+const CHAT_WRITE_TOOLS = [
+  "createInvoiceDraft",
+  "createDeliveryOrder",
+  "addInvoiceItem",
+  "updateInvoiceItem",
+  "removeInvoiceItem",
+  "updateInvoice",
+  "finalizeInvoice",
+  "copyInvoice",
+  "convertDelivery",
+  "recordPayment",
+  "createCustomer",
+  "updateCustomer",
+  "addCustomerAlias",
+  "createProduct",
+  "updateProduct",
+  "addProductAlias",
+] as const;
+const ADMIN_WRITE_TOOLS = adminToolDefinitions.filter((t) => !t.readOnly).map((t) => t.name);
+const CONFIRM_TOOLS: readonly string[] = [...CHAT_WRITE_TOOLS, ...ADMIN_WRITE_TOOLS];
 
 export const CONFIRM_ACTION = "confirmAction";
 /** ChatGPT's connectors (outside Developer mode, and deep research) only use tools with exactly these two names. */
@@ -124,10 +145,16 @@ export interface ExternalTool {
 }
 
 const CONFIRM_NOTE =
-  " OUTSIDE-APP RULE: this call only PREVIEWS — nothing is saved. It returns status needs_confirmation with the preview and a confirmToken. Show the preview to the person (customer, items, quantities, prices, totals and any warnings) and call confirmAction with the token only after they say yes. If they want changes, call this tool again with the corrected order to get a new preview.";
+  " OUTSIDE-APP RULE: this call only PREVIEWS — nothing is saved. It returns status needs_confirmation with the preview (what will be saved or changed, money before and after, and any warnings) and a confirmToken. Show the preview to the person and call confirmAction with the token only after they say yes. If they want changes, call this tool again with the corrected details to get a new preview.";
 
-const PRODUCT_CONFIRM_NOTE =
-  " OUTSIDE-APP RULE: this call only PREVIEWS — nothing is saved. It returns status needs_confirmation with the preview (the new product, or each field's old and new value) and a confirmToken. Show it to the person and call confirmAction with the token only after they say yes. Changing a price changes only the product's default price; past invoices keep theirs.";
+/** Chat wording about asking with requestUserInput / confirmed=true doesn't apply here (confirmAction does that). */
+function outsideDescription(description: string): string {
+  return description
+    .split(/(?<=\.)\s+/)
+    .filter((sentence) => !/requestUserInput|confirmed=true|In the chat|Nothing is saved on the first call/.test(sentence))
+    .join(" ")
+    .replace(/ If the result is needs_confirmation with a preview[^]*$/, "");
+}
 
 function stripProperty(schema: Record<string, unknown>, prop: string): Record<string, unknown> {
   const properties = { ...(schema.properties as Record<string, unknown>) };
@@ -142,28 +169,38 @@ function buildCatalog(): ExternalTool[] {
     const t = byName.get(name)!;
     out.push({ name, description: t.description, inputSchema: t.input_schema as Record<string, unknown>, readOnly: true });
   }
-  for (const name of ORDER_TOOLS) {
+  for (const t of adminToolDefinitions.filter((d) => d.readOnly)) {
+    out.push({ name: t.name, description: t.description, inputSchema: t.input_schema, readOnly: true });
+  }
+  for (const name of CHAT_WRITE_TOOLS) {
     const t = byName.get(name)!;
     // The chat-only `confirmed` flag means nothing here: confirming is done with confirmAction's token.
-    const schema = stripProperty(t.input_schema as Record<string, unknown>, "confirmed");
-    const description = t.description.replace(/ If the result is needs_confirmation with a preview[^]*$/, "") + CONFIRM_NOTE;
-    out.push({ name, description, inputSchema: schema, readOnly: false });
+    let schema = stripProperty(t.input_schema as Record<string, unknown>, "confirmed");
+    if (name === "createInvoiceDraft") {
+      schema = {
+        ...schema,
+        properties: {
+          ...(schema.properties as Record<string, unknown>),
+          finalize: { type: "boolean", description: "Save it as a finished (unpaid) invoice instead of a draft, like the app's New invoice form. Every item then needs a quantity and a price." },
+        },
+      };
+    }
+    out.push({ name, description: outsideDescription(t.description) + CONFIRM_NOTE, inputSchema: schema, readOnly: false });
   }
-  for (const name of PRODUCT_TOOLS) {
-    const t = byName.get(name)!;
-    out.push({ name, description: t.description + PRODUCT_CONFIRM_NOTE, inputSchema: t.input_schema as Record<string, unknown>, readOnly: false });
+  for (const t of adminToolDefinitions.filter((d) => !d.readOnly)) {
+    out.push({ name: t.name, description: t.description + CONFIRM_NOTE, inputSchema: t.input_schema, readOnly: false });
   }
   out.push(
     {
       name: SEARCH,
       description:
-        "Search the store for customers, products and invoices by name, nickname or invoice number (Vietnamese with or without accents). An empty query lists all customers. Returns results with an id; pass that id to fetch for the details.",
+        "Search the store for customers, products, invoices, vendors and purchases by name, nickname, invoice number or vendor invoice number (Vietnamese with or without accents). An empty query lists all customers. Returns results with an id; pass that id to fetch for the details.",
       inputSchema: { type: "object", properties: { query: { type: "string", description: "What to look for." } }, required: ["query"] },
       readOnly: true,
     },
     {
       name: FETCH,
-      description: "Get the full details of one search result by its id: a customer with their current debt, a product, or an invoice.",
+      description: "Get the full details of one search result by its id: a customer with their current debt, a product, an invoice, a vendor or a purchase.",
       inputSchema: { type: "object", properties: { id: { type: "string", description: "An id returned by search." } }, required: ["id"] },
       readOnly: true,
     }
@@ -171,7 +208,7 @@ function buildCatalog(): ExternalTool[] {
   out.push({
     name: CONFIRM_ACTION,
     description:
-      "Save something that was previewed by createInvoiceDraft, createDeliveryOrder, createProduct, updateProduct or addProductAlias. Call only after the person has seen the preview and said yes. Saves exactly what was previewed (same customer, products, quantities and prices, or the same product changes). Each token works once and expires after 30 minutes; calling again with the same token returns the same result instead of saving it twice.",
+      "Save something that was previewed by any tool that changes data (it returned needs_confirmation with a confirmToken). Call only after the person has seen the preview and said yes. Saves exactly what was previewed. Each token works once and expires after 30 minutes; calling again with the same token returns the same result instead of saving it twice.",
     inputSchema: {
       type: "object",
       properties: { confirmToken: { type: "string", description: "The confirmToken from the preview." } },
@@ -187,11 +224,12 @@ const externalToolNames = new Set(externalTools.map((t) => t.name));
 
 /** Instructions for an outside AI connecting over MCP (sent once at connection time). */
 export const EXTERNAL_INSTRUCTIONS = [
-  "This is the invoice app of a small Vietnamese wholesale/grocery store. Customer and product names are often Vietnamese, typed without accents or as nicknames; search tools match them fuzzily.",
-  "All amounts are USD. The app computes every total, balance and debt — always report the numbers it returns, never your own arithmetic.",
-  "Search before you act. If a tool returns needs_confirmation with candidates, ask the person which one they mean. If it returns needs_new_product, offer to add it with createProduct. If it returns needs_new_customer, tell them to add the customer in the app first (this connection cannot create customers).",
-  "Creating an invoice draft or a delivery order, and creating or editing a product (createProduct, updateProduct, addProductAlias), take two steps: the tool returns a preview and a confirmToken; show the preview, and call confirmAction only after the person says yes. Never say something was saved until confirmAction returns status created, updated or alias_added.",
-  "This connection cannot record payments, edit or void invoices, set final prices on deliveries, delete products, or create or change customers — those are done in the app.",
+  "This is the invoice app of a small Vietnamese wholesale/grocery store. Customer, product and vendor names are often Vietnamese, typed without accents or as nicknames; search tools match them fuzzily.",
+  "All amounts are USD. The app computes every total, balance, debt and stock count — always report the numbers it returns, never your own arithmetic.",
+  "You can do everything the app can: invoices (drafts, finished invoices, edits, voids), delivery orders and setting their final prices, customer payments (one invoice, or a customer's whole payment oldest invoice first), fixing or cancelling a payment, debt adjustments, customers, products, vendors, purchases from vendors (Buy from vendor: adds stock), vendor payments, cancelling a purchase, Custom Invoice print info, the payment request statement, the invoice list and dashboard numbers.",
+  "Search before you act. If a tool returns needs_confirmation with candidates, ask the person which one they mean. needs_new_product → offer createProduct; needs_new_customer → offer createCustomer; needs_new_vendor → offer createVendor.",
+  "Every tool that changes data takes two steps: it returns a preview and a confirmToken; show the preview, and call confirmAction only after the person says yes. Never say something was saved until confirmAction returns a saved status (created, updated, recorded, converted, cancelled, saved, finalized, alias_added).",
+  "Nothing can be permanently deleted. Voiding an invoice or cancelling a purchase keeps it, marked void/cancelled. Payments can't be more than what is still owed.",
 ].join("\n");
 
 /** Runs one outside-AI tool call as `user`. Unknown names are refused; business errors come back as results. */
@@ -201,7 +239,7 @@ export async function runExternalTool(name: string, args: Record<string, unknown
   if (name === SEARCH) return searchAll(String(args.query ?? ""));
   if (name === FETCH) return fetchOne(String(args.id ?? ""));
   if (CONFIRM_TOOLS.includes(name)) {
-    const result = (await executeTool(name, args, { channel: "api", previewOnly: true })) as Record<string, unknown>;
+    const result = (await runTool(name, args, { previewOnly: true })) as Record<string, unknown>;
     if (result.status !== "preview") return result; // needs_confirmation / needs_new_customer / needs_more_info / error…
     const token = randomBytes(24).toString("base64url");
     const now = Date.now();
@@ -220,7 +258,13 @@ export async function runExternalTool(name: string, args: Record<string, unknown
       expiresInMinutes: PENDING_TTL_MS / 60_000,
     };
   }
-  return executeTool(name, args, { channel: "api" });
+  return runTool(name, args, {});
+}
+
+/** One door to both tool sets: the shared chat tools (tools.ts) and the outside-only admin tools (adminTools.ts). */
+function runTool(name: string, args: Record<string, unknown>, ctx: { previewOnly?: boolean; operationId?: string; canConfirm?: boolean }): Promise<unknown> {
+  if (adminToolNames.has(name)) return runAdminTool(name, args, { previewOnly: ctx.previewOnly, operationId: ctx.operationId });
+  return executeTool(name, args, { channel: "api", ...ctx });
 }
 
 /* ------------------------- search / fetch (ChatGPT's shape) ------------------------- */
@@ -240,16 +284,20 @@ async function searchAll(query: string): Promise<{ results: SearchHit[] }> {
   }
   const run = async (tool: string, args: Record<string, unknown>) =>
     (((await executeTool(tool, args, { channel: "api" })) as { results?: Row[] }).results ?? []);
-  const [customers, products, invoices] = await Promise.all([
+  const [customers, products, invoices, vendors, purchases] = await Promise.all([
     run("searchCustomer", { query: q }),
     run("searchProduct", { query: q }),
     run("searchInvoices", { text: q, limit: 10 }),
+    runAdminTool("searchVendor", { query: q }).then((r) => ((r as { results?: Row[] }).results ?? []).filter((v) => Number(v.score) >= 0.55)),
+    runAdminTool("searchPurchases", { query: q, limit: 10 }).then((r) => (r as { purchases?: Row[] }).purchases ?? []),
   ]);
   return {
     results: [
       ...customers.map((c) => ({ id: `customer:${c.id}`, title: `Customer: ${c.name}`, url: appLink("/customers") })),
       ...products.map((p) => ({ id: `product:${p.id}`, title: `Product: ${p.name}`, url: appLink("/products") })),
       ...invoices.map((i) => ({ id: `invoice:${i.id}`, title: `Invoice #${i.invoiceNumber} – ${i.customerName}`, url: appLink(`/invoices/${i.id}`) })),
+      ...vendors.map((v) => ({ id: `vendor:${v.id}`, title: `Vendor: ${v.name}`, url: appLink(`/vendors/${v.id}`) })),
+      ...purchases.map((p) => ({ id: `purchase:${p.id}`, title: `Purchase ${p.purchaseNumber} – ${p.vendorName}${p.vendorInvoiceNumber ? ` (#${p.vendorInvoiceNumber})` : ""}`, url: appLink(`/purchases/${p.id}`) })),
     ],
   };
 }
@@ -280,6 +328,17 @@ async function fetchOne(id: string): Promise<unknown> {
     const inv = data.invoice as { invoiceNumber: string; customerName: string };
     title = `Invoice #${inv.invoiceNumber} – ${inv.customerName}`;
     url = appLink(`/invoices/${key}`);
+  } else if (kind === "vendor") {
+    if (!(await getVendor(key))) return { status: "not_found" };
+    data = (await runAdminTool("getVendor", { vendorId: key })) as Record<string, unknown>;
+    title = `Vendor: ${(data.vendor as { name: string }).name}`;
+    url = appLink(`/vendors/${key}`);
+  } else if (kind === "purchase") {
+    const purchase = await getPurchase(key);
+    if (!purchase) return { status: "not_found" };
+    data = (await runAdminTool("getPurchase", { purchaseId: key })) as Record<string, unknown>;
+    title = `Purchase ${purchase.purchaseNumber} – ${purchase.vendorName}`;
+    url = appLink(`/purchases/${key}`);
   } else {
     return { status: "error", message: "Unknown id. Use an id returned by search." };
   }
@@ -306,5 +365,5 @@ async function confirmAction(token: string, user: AuthedUser): Promise<unknown> 
   // The operation id is fixed per token: the store's idempotency ledger makes a second confirm (a retry, a double
   // tap) return the invoice saved the first time instead of creating a second one.
   // canConfirm: the person said yes to this exact preview (it is what lets a previewed force=true product save).
-  return executeTool(pending.tool, pending.args, { channel: "api", operationId: `api_${id.slice(0, 40)}`, canConfirm: true });
+  return runTool(pending.tool, pending.args, { operationId: `api_${id.slice(0, 40)}`, canConfirm: true });
 }

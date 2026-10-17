@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysSince, owedByCustomer, summarizeCustomerInvoices } from "./customerInvoices";
+import { daysSince, owedByCustomer, statementTotals, summarizeCustomerInvoices } from "./customerInvoices";
 import type { Invoice, InvoiceStatus } from "./types";
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -76,5 +76,26 @@ describe("daysSince", () => {
   it("counts whole days and never goes negative", () => {
     expect(daysSince(0, 3.5 * DAY)).toBe(3);
     expect(daysSince(10 * DAY, 0)).toBe(0);
+  });
+});
+
+describe("statementTotals", () => {
+  const invoices = [
+    inv("a", "paid", 100, 100, 1 * DAY),
+    inv("b", "unpaid", 50.1, 0, 5 * DAY),
+    inv("c", "partial", 80, 30.2, 3 * DAY),
+    inv("d", "draft", 999, 0, 6 * DAY),
+    inv("e", "void", 777, 0, 7 * DAY),
+  ];
+
+  it("leaves drafts and voids out and owes the same as the customer page", () => {
+    const t = statementTotals(invoices);
+    expect(t).toEqual({ count: 3, totalBilled: 230.1, totalPaid: 130.2, totalOwed: 99.9 });
+    expect(t.totalOwed).toBe(summarizeCustomerInvoices(invoices).totalOwed);
+  });
+
+  it("only counts the picked invoices", () => {
+    expect(statementTotals([invoices[0]])).toEqual({ count: 1, totalBilled: 100, totalPaid: 100, totalOwed: 0 });
+    expect(statementTotals([])).toEqual({ count: 0, totalBilled: 0, totalPaid: 0, totalOwed: 0 });
   });
 });

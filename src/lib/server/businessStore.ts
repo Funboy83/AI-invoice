@@ -37,7 +37,7 @@ const settingsCol = () => db().collection("settings");
  * DIFFERENT fingerprint, this throws OperationConflictError instead of silently handing back the first call's
  * (unrelated) result — closing the gap a bare key-match ledger has no way to catch on its own.
  */
-async function runOnce<T>(operationId: string | undefined, tool: string, fingerprintInput: unknown, body: (tx: Transaction) => Promise<T>): Promise<T> {
+export async function runOnce<T>(operationId: string | undefined, tool: string, fingerprintInput: unknown, body: (tx: Transaction) => Promise<T>): Promise<T> {
   const fingerprint = JSON.stringify(fingerprintInput);
   return db().runTransaction(async (tx) => {
     if (!operationId) return body(tx);
@@ -848,6 +848,12 @@ export async function changePayment(input: {
     tx.update(paymentRef, updated);
     return { payment: { ...before, ...updated }, ...(invoice ? { invoice } : {}), ...(credit !== undefined ? { credit } : {}) };
   });
+}
+
+export async function getPaymentById(id: string): Promise<Payment | null> {
+  if (!id) return null;
+  const snap = await paymentsCol().doc(id).get();
+  return snap.exists ? ({ id: snap.id, ...snap.data() } as Payment) : null;
 }
 
 export async function getPaymentsForCustomer(customerId: string): Promise<Payment[]> {

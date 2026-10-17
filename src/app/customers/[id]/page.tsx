@@ -12,7 +12,7 @@ import DeliveryBadge from "@/components/DeliveryBadge";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Customer, Invoice, Payment } from "@/lib/types";
-import { ArrowLeft, Pencil, Phone, ChevronRight, DollarSign } from "lucide-react";
+import { ArrowLeft, Pencil, Phone, ChevronRight, DollarSign, FileText } from "lucide-react";
 
 type Tab = "unpaid" | "paid" | "all";
 
@@ -99,6 +99,14 @@ export default function CustomerDetailPage() {
         </p>
         {customer.notes && <p className="text-sm text-slate-600 mt-2 whitespace-pre-line">{customer.notes}</p>}
       </div>
+
+      {/* Up top so it is seen without scrolling: combine several invoices into one page to send the customer. */}
+      <Link
+        href={`/customers/${customer.id}/payment-request`}
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white shadow-sm hover:bg-emerald-700 md:w-auto md:inline-flex"
+      >
+        <FileText size={18} /> Payment request (combine invoices)
+      </Link>
 
       {/* Balance summary: the numbers to chase. */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
