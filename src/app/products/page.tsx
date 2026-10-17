@@ -213,7 +213,7 @@ function ProductsPageContent() {
                 <td className="px-5 py-3 text-right text-slate-900">${p.defaultPrice.toFixed(2)}</td>
                 <td className="px-5 py-3 text-slate-500">{p.defaultUnit}</td>
                 <td className={`px-5 py-3 text-right ${p.quantity !== undefined && p.quantity < 0 ? "text-red-600 font-medium" : "text-slate-500"}`}>
-                  {p.quantity !== undefined ? p.quantity : "—"}
+                  {p.quantity !== undefined ? p.quantity : <span className="text-xs text-slate-400">Not counted</span>}
                 </td>
                 <td className="px-5 py-3 text-slate-500">{p.category || "—"}</td>
                 <td className="px-5 py-3 text-right">
@@ -252,8 +252,10 @@ function ProductsPageContent() {
             <p className="text-xs text-slate-500 mt-0.5">
               {p.defaultUnit}
               {p.category ? ` · ${p.category}` : ""}
-              {p.quantity !== undefined && (
+              {p.quantity !== undefined ? (
                 <span className={p.quantity < 0 ? "text-red-600 font-medium" : undefined}> · stock: {p.quantity}</span>
+              ) : (
+                <span className="text-slate-400"> · stock: not counted</span>
               )}
             </p>
             {p.aliases.length > 0 && (

@@ -557,7 +557,7 @@ function buildAliasSuggestion(kind: "product" | "customer", id: string, canonica
 }
 
 export function summarizeProduct(p: Product) {
-  return { id: p.id, name: p.name, aliases: p.aliases, defaultUnit: p.defaultUnit, defaultPrice: p.defaultPrice, category: p.category };
+  return { id: p.id, name: p.name, aliases: p.aliases, defaultUnit: p.defaultUnit, defaultPrice: p.defaultPrice, category: p.category, stock: p.quantity ?? null };
 }
 export function summarizeCustomer(c: Customer) {
   return { id: c.id, name: c.name, aliases: c.aliases, phone: c.phone, address: c.address };
