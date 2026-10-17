@@ -121,7 +121,9 @@ Endpoints:
 - MCP (Streamable HTTP, JSON responses): `POST /api/mcp` with `Authorization: Bearer <key>`, or `POST /api/mcp/<key>` for apps whose connector screen only takes a URL (claude.ai, ChatGPT). Treat that link like a password.
 - REST: `GET /api/v1/tools` (list + input schemas), `POST /api/v1/tools/<name>` with the arguments as JSON. Key in `Authorization: Bearer` or `X-API-Key`.
 
-What it can do: read tools (customers, products, invoices, debt, unpaid, deliveries, payments, last price), the generic `search` (empty query lists customers) and `fetch` that ChatGPT connectors look for, plus `createInvoiceDraft`, `createDeliveryOrder`, `createProduct`, `updateProduct` and `addProductAlias`, which only **preview** and return a one-time `confirmToken`; `confirmAction` saves exactly what was previewed (30-minute expiry, a repeat returns the same result). Payments, invoice edits, voids, delivery pricing, product deletion and customer changes are not exposed (docs/OPERATING_POLICY.md rule 5).
+What it can do: **everything the app's pages can do, like an admin** (owner decision, 2026-10-17). Reads: customers, products, invoices (list by day/customer/status, history), debt, deliveries, payments, the dashboard numbers, the payment request statement, Custom Invoice info, vendors and purchases, plus the generic `search`/`fetch` ChatGPT connectors look for. Writes: invoices (draft or finished, item edits, voids, copy, finalize), delivery pricing, customer payments, customers, products, vendors, purchases (adds stock), vendor payments, cancelling a purchase, Custom Invoice info. Every write only **previews** and returns a one-time `confirmToken`; `confirmAction` saves exactly what was previewed (30-minute expiry, a repeat returns the same result), through the same store functions the app uses. Nothing can be permanently deleted. Chat tools live in `src/lib/ai/tools.ts`; the outside-only ones (vendors, purchases, statements, print info, lists) in `src/lib/server/adminTools.ts`.
+
+**Every new feature must ship with its MCP tools** — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Testing access control
 
