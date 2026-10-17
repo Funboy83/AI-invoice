@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { randomUUID } from "node:crypto";
-import { toolDefinitions, executeTool, MUTATING_TOOLS, operationIdFor, type ToolContext } from "@/lib/ai/tools";
+import { operationIdFor, type ToolContext } from "@/lib/ai/tools";
+import { chatToolDefinitions, CHAT_MUTATING_TOOLS, executeChatTool } from "./chatTools";
 import { SYSTEM_PROMPT } from "@/lib/ai/systemPrompt";
 import { choicesFromCandidates, cleanChoices, collectLinks, linksForToolResult, type ChatLink } from "@/lib/chat/links";
 import { ConfigError, getAdminDb } from "./firebaseAdmin";
@@ -51,10 +52,10 @@ const MIN_TIME_TO_CHAIN_MS = 60_000;
 /** Independent read-only tool calls of one model turn run at most this many at a time. */
 export const READ_CONCURRENCY = 4;
 
-const BLOCKING_STATUSES = new Set(["needs_confirmation", "needs_new_product", "needs_new_customer", "needs_more_info"]);
+const BLOCKING_STATUSES = new Set(["needs_confirmation", "needs_new_product", "needs_new_customer", "needs_new_vendor", "needs_more_info"]);
 /** Tools that neither change data nor wait on the user; calls to them within one model turn are independent. */
 const READ_ONLY_TOOLS: ReadonlySet<string> = new Set(
-  toolDefinitions.map((t) => t.name).filter((n) => !MUTATING_TOOLS.has(n) && n !== "requestUserInput")
+  chatToolDefinitions.map((t) => t.name).filter((n) => !CHAT_MUTATING_TOOLS.has(n) && n !== "requestUserInput")
 );
 
 export interface RunnerDeps {
@@ -80,7 +81,7 @@ export function defaultDeps(): RunnerDeps {
       // Timeout comes from the remaining invocation budget; retries are ours (budget-aware), not the SDK's.
       return new Anthropic({ apiKey }).messages.create(params, { timeout: timeoutMs, maxRetries: 0 });
     },
-    executeTool,
+    executeTool: executeChatTool,
     sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     budgetMs: INVOCATION_LIMIT_MS,
     continueJob: dispatchContinuation,
@@ -530,14 +531,14 @@ async function executeAttempt(rc: RunCtx): Promise<Attempt> {
 
   // The system prompt and tool schemas are identical on every request, so mark them cacheable.
   const system: Anthropic.Messages.TextBlockParam[] = [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }];
-  const cachedTools = toolDefinitions.map((t, i) =>
-    i === toolDefinitions.length - 1 ? { ...t, cache_control: { type: "ephemeral" as const } } : t
+  const cachedTools = chatToolDefinitions.map((t, i) =>
+    i === chatToolDefinitions.length - 1 ? { ...t, cache_control: { type: "ephemeral" as const } } : t
   );
 
   /** Runs one tool call (no checkpoint). For a write, an unexpected error aborts the attempt — see below. */
   async function execute(use: ToolUse, step: number, waveSize: number): Promise<ToolCallDoc> {
     guard();
-    const mutating = MUTATING_TOOLS.has(use.name);
+    const mutating = CHAT_MUTATING_TOOLS.has(use.name);
     const operationId = mutating ? operationIdFor(jobId, use.id) : null;
     const start = performance.now();
     let result: unknown;
