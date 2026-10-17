@@ -9,7 +9,7 @@ import CustomerFormModal from "@/components/CustomerFormModal";
 import DeliveryBadge from "@/components/DeliveryBadge";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Customer, Invoice } from "@/lib/types";
-import { ArrowLeft, Pencil, Phone, ChevronRight } from "lucide-react";
+import { ArrowLeft, Pencil, Phone, ChevronRight, FileText } from "lucide-react";
 
 const statusStyles: Record<string, string> = {
   draft: "bg-slate-100 text-slate-600",
@@ -126,6 +126,13 @@ export default function CustomerDetailPage() {
         <SummaryCard label="Total billed" value={`$${summary.totalBilled.toFixed(2)}`} sub={`${summary.unpaid.length + summary.paid.length} invoices`} />
         <SummaryCard label="Total paid" value={`$${summary.totalPaid.toFixed(2)}`} sub={`${summary.paid.length} fully paid`} />
       </div>
+
+      <Link
+        href={`/customers/${customer.id}/payment-request`}
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700 md:w-auto md:inline-flex"
+      >
+        <FileText size={16} /> Payment request
+      </Link>
 
       {/* Unpaid / Paid / All */}
       <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm font-medium">

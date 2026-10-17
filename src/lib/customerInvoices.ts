@@ -58,3 +58,28 @@ export function owedByCustomer(invoices: Invoice[]): Map<string, number> {
   for (const [id, sum] of owed) owed.set(id, round2(sum));
   return owed;
 }
+
+/** Invoices that can go on a payment request (statement): committed ones only — drafts and voids are left out. */
+export const isStatementInvoice = (i: Invoice) => isOpenInvoice(i) || i.paymentStatus === "paid";
+
+/** What one invoice still owes on a statement: its `balance` when unpaid/partial, else 0 (same rule as getCustomerDebt). */
+export const statementOwed = (i: Invoice) => (isOpenInvoice(i) ? i.balance : 0);
+
+export interface StatementTotals {
+  count: number;
+  totalBilled: number;
+  totalPaid: number;
+  /** Sum of statementOwed — for a statement holding every open invoice this equals the customer's getCustomerDebt. */
+  totalOwed: number;
+}
+
+/** Totals for the invoices picked for a payment request. Read-only: nothing here changes an invoice. */
+export function statementTotals(invoices: Invoice[]): StatementTotals {
+  const picked = invoices.filter(isStatementInvoice);
+  return {
+    count: picked.length,
+    totalBilled: round2(picked.reduce((sum, i) => sum + i.total, 0)),
+    totalPaid: round2(picked.reduce((sum, i) => sum + i.amountPaid, 0)),
+    totalOwed: round2(picked.reduce((sum, i) => sum + statementOwed(i), 0)),
+  };
+}
