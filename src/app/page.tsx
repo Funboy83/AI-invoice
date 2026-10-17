@@ -7,6 +7,7 @@ import { useAppAuth } from "@/lib/useAppAuth";
 import { isInvoiceIncomplete, type Product, type Customer, type Invoice } from "@/lib/types";
 import { FileText, Boxes, Users, AlertTriangle } from "lucide-react";
 import MobileChatHome from "@/components/MobileChatHome";
+import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 
 // Each tile has its own colour so the numbers are easy to tell apart; they match the menu (Invoices blue, Products orange, Customers green).
 const statTones = {
@@ -123,9 +124,7 @@ function DashboardContent() {
               </div>
               <div className="flex items-center gap-3">
                 <span className="text-sm font-semibold text-slate-900">${inv.total.toFixed(2)}</span>
-                <span className="text-[11px] uppercase font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
-                  {inv.paymentStatus}
-                </span>
+                <PaymentStatusBadge status={inv.paymentStatus} />
               </div>
             </Link>
           ))}

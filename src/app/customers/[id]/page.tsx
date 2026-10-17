@@ -3,21 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { watchCustomers, watchInvoicesForCustomer } from "@/lib/store";
+import { watchCustomers, watchInvoicesForCustomer, watchPaymentsForCustomer } from "@/lib/store";
 import { daysSince, summarizeCustomerInvoices } from "@/lib/customerInvoices";
 import CustomerFormModal from "@/components/CustomerFormModal";
+import CustomerPaymentModal from "@/components/CustomerPaymentModal";
+import PaymentHistory from "@/components/PaymentHistory";
 import DeliveryBadge from "@/components/DeliveryBadge";
+import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 import { useAppAuth } from "@/lib/useAppAuth";
-import type { Customer, Invoice } from "@/lib/types";
-import { ArrowLeft, Pencil, Phone, ChevronRight, FileText } from "lucide-react";
-
-const statusStyles: Record<string, string> = {
-  draft: "bg-slate-100 text-slate-600",
-  unpaid: "bg-blue-100 text-blue-700",
-  partial: "bg-amber-100 text-amber-700",
-  paid: "bg-emerald-100 text-emerald-700",
-  void: "bg-red-100 text-red-700",
-};
+import type { Customer, Invoice, Payment } from "@/lib/types";
+import { ArrowLeft, Pencil, Phone, ChevronRight, DollarSign, FileText } from "lucide-react";
 
 type Tab = "unpaid" | "paid" | "all";
 
@@ -30,14 +25,18 @@ export default function CustomerDetailPage() {
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [tab, setTab] = useState<Tab>("unpaid");
   const [editing, setEditing] = useState(false);
+  const [paying, setPaying] = useState<"payment" | "adjustment" | null>(null);
+  const [payments, setPayments] = useState<Payment[]>([]);
 
   useEffect(() => {
     const onErr = reportListenerError;
     const u1 = watchCustomers(setCustomers, onErr);
     const u2 = watchInvoicesForCustomer(id, setInvoices, onErr);
+    const u3 = watchPaymentsForCustomer(id, setPayments, onErr);
     return () => {
       u1();
       u2();
+      u3();
     };
   }, [id, reportListenerError]);
 
@@ -125,6 +124,9 @@ export default function CustomerDetailPage() {
               ? "All paid up"
               : `${summary.unpaid.length} unpaid invoice${summary.unpaid.length > 1 ? "s" : ""}`}
           </p>
+          {(customer.credit ?? 0) > 0 && (
+            <p className="text-xs font-medium text-sky-700 mt-1">Credit ${customer.credit!.toFixed(2)} (paid extra)</p>
+          )}
         </div>
         <SummaryCard
           label="Oldest unpaid"
@@ -133,6 +135,22 @@ export default function CustomerDetailPage() {
         />
         <SummaryCard label="Total billed" value={`$${summary.totalBilled.toFixed(2)}`} sub={`${summary.unpaid.length + summary.paid.length} invoices`} />
         <SummaryCard label="Total paid" value={`$${summary.totalPaid.toFixed(2)}`} sub={`${summary.paid.length} fully paid`} />
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          onClick={() => setPaying("payment")}
+          className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white hover:bg-emerald-700 active:bg-emerald-800"
+        >
+          <DollarSign size={18} /> Record payment
+        </button>
+        <button
+          onClick={() => setPaying("adjustment")}
+          disabled={summary.totalOwed <= 0}
+          className="shrink-0 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-40"
+        >
+          Adjust debt
+        </button>
       </div>
 
       {/* Unpaid / Paid / All */}
@@ -150,7 +168,7 @@ export default function CustomerDetailPage() {
         ))}
       </div>
       {tab === "unpaid" && summary.unpaid.length > 0 && (
-        <p className="text-xs text-slate-500 -mt-2">Oldest first. Tap an invoice to record a payment.</p>
+        <p className="text-xs text-slate-500 -mt-2">Oldest first. A payment from Record payment pays these from the top down.</p>
       )}
 
       <div className="space-y-2">
@@ -163,9 +181,7 @@ export default function CustomerDetailPage() {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="font-medium text-slate-900">#{inv.invoiceNumber}</p>
-                <span className={`text-[10px] uppercase font-medium px-2 py-0.5 rounded-full ${statusStyles[inv.paymentStatus]}`}>
-                  {inv.paymentStatus}
-                </span>
+                <PaymentStatusBadge status={inv.paymentStatus} />
                 {inv.delivery && <DeliveryBadge invoice={inv} />}
               </div>
               <p className="text-xs text-slate-500 mt-1">
@@ -190,7 +206,10 @@ export default function CustomerDetailPage() {
         )}
       </div>
 
+      <PaymentHistory payments={payments} invoices={summary.all} customer={customer} />
+
       {editing && <CustomerFormModal customer={customer} onClose={() => setEditing(false)} />}
+      {paying && <CustomerPaymentModal customer={customer} invoices={summary.unpaid} totalOwed={summary.totalOwed} mode={paying} onClose={() => setPaying(null)} />}
     </div>
   );
 }

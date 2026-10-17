@@ -84,6 +84,7 @@ describe("what an outside AI can do", () => {
         "addProductAlias", "recordPayment", "updateInvoice", "convertDelivery", "createCustomer", "updateCustomer", "addInvoiceItem",
         "listVendors", "createVendor", "updateVendor", "createPurchase", "searchPurchases", "getPurchase", "recordVendorPayment",
         "updatePurchaseInfo", "cancelPurchase", "getPaymentRequest", "getCustomInvoice", "saveCustomInvoice", "listInvoices",
+        "recordCustomerPayment", "adjustCustomerDebt", "changePayment",
         "getStoreSummary", "getInvoiceHistory", "confirmAction",
       ])
     );

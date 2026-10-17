@@ -282,6 +282,64 @@ describe("POST /api/business/invoices/[id]/payments", () => {
   });
 });
 
+describe("POST /api/business/customers/[id]/payments", () => {
+  it("splits the payment oldest first; rejects zero/negative with no write; a repeated operationId pays once", async () => {
+    store.put("customers/c1", { name: "Hoa Lee", aliases: [], active: true });
+    const item = { productId: "p1", productName: "Milo", quantity: 1, unit: "u", price: 100, lineTotal: 100 };
+    const a = await createInvoice({ customerId: "c1", customerName: "Hoa Lee", items: [item], status: "unpaid", createdBy: "user", actor: "user", operationId: "seed-c1" });
+    const b = await createInvoice({ customerId: "c1", customerName: "Hoa Lee", items: [item], status: "unpaid", createdBy: "user", actor: "user", operationId: "seed-c2" });
+    store.put(`invoices/${a.id}`, { ...store.read(`invoices/${a.id}`)!, date: 1000 });
+    store.put(`invoices/${b.id}`, { ...store.read(`invoices/${b.id}`)!, date: 2000 });
+    const { POST } = await import("./customers/[id]/payments/route");
+    const params = { params: Promise.resolve({ id: "c1" }) };
+    for (const bad of [0, -5]) expect((await POST(post("/api/business/customers/c1/payments", { amount: bad }), params)).status).toBe(400);
+    expect(store.count("payments")).toBe(0);
+    const body = { amount: 130, method: "cash", operationId: "cust-pay-1" };
+    const ok = await POST(post("/api/business/customers/c1/payments", body), params);
+    expect(ok.status).toBe(201);
+    await POST(post("/api/business/customers/c1/payments", body), params);
+    expect(store.read(`invoices/${a.id}`)).toMatchObject({ amountPaid: 100, paymentStatus: "paid" });
+    expect(store.read(`invoices/${b.id}`)).toMatchObject({ amountPaid: 30, balance: 70, paymentStatus: "partial" });
+    expect(store.count("payments")).toBe(2);
+  });
+
+  it("keeps a back-dated payment date and refuses a future one", async () => {
+    store.put("customers/c1", { name: "Hoa Lee", aliases: [], active: true });
+    const { POST } = await import("./customers/[id]/payments/route");
+    const params = { params: Promise.resolve({ id: "c1" }) };
+    const lastWeek = Date.now() - 7 * 86400_000;
+    expect((await POST(post("/api/business/customers/c1/payments", { amount: 5, paidAt: Date.now() + 5 * 86400_000 }), params)).status).toBe(400);
+    expect(store.count("payments")).toBe(0);
+    expect((await POST(post("/api/business/customers/c1/payments", { amount: 5, paidAt: lastWeek, method: "Check" }), params)).status).toBe(201);
+    expect(store.list("payments")[0][1]).toMatchObject({ paidAt: lastWeek, method: "Check", amount: 5, unallocated: true });
+  });
+
+  it("404 for an unknown customer", async () => {
+    const { POST } = await import("./customers/[id]/payments/route");
+    const res = await POST(post("/api/business/customers/nope/payments", { amount: 10 }), { params: Promise.resolve({ id: "nope" }) });
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("PATCH /api/business/payments/[id]", () => {
+  it("edits with a reason, records who did it, and rejects a missing reason or bad action with no write", async () => {
+    const item = { productId: "p1", productName: "Milo", quantity: 1, unit: "u", price: 100, lineTotal: 100 };
+    const inv = await createInvoice({ customerName: "Hoa Lee", items: [item], status: "unpaid", createdBy: "user", actor: "user", operationId: "seed-fix" });
+    const { POST } = await import("./invoices/[id]/payments/route");
+    await POST(post(`/api/business/invoices/${inv.id}/payments`, { amount: 100 }), { params: Promise.resolve({ id: inv.id }) });
+    const payId = store.list("payments")[0][0];
+    const { PATCH } = await import("./payments/[id]/route");
+    const params = { params: Promise.resolve({ id: payId }) };
+    expect((await PATCH(patch(`/api/business/payments/${payId}`, { action: "edit", amount: 10 }), params)).status).toBe(400);
+    expect((await PATCH(patch(`/api/business/payments/${payId}`, { action: "delete", reason: "x" }), params)).status).toBe(400);
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 100 });
+    const ok = await PATCH(patch(`/api/business/payments/${payId}`, { action: "edit", amount: 10, reason: "typo", by: "attacker@example.com" }), params);
+    expect(ok.status).toBe(200);
+    expect(store.read(`invoices/${inv.id}`)).toMatchObject({ amountPaid: 10, paymentStatus: "partial" });
+    expect(store.read(`payments/${payId}`)!.history).toEqual([expect.objectContaining({ by: MEMBER.email, reason: "typo" })]);
+  });
+});
+
 describe("B1 (route level) — the exact client retry shape: same stable operationId across a lost-response retry", () => {
   it("POST /invoices twice with the SAME operationId (what businessApi.ts + useActionId now send on retry): exactly one invoice", async () => {
     const { POST } = await import("./invoices/route");

@@ -1,9 +1,10 @@
 import { findSimilarWithAliases, normalizeVN } from "@/lib/similarity";
 import { DomainError, NotFoundError } from "@/lib/domainErrors";
-import { assertNonNegativeAmount, assertPositiveAmount } from "@/lib/invoiceMath";
+import { assertNonNegativeAmount, assertPositiveAmount, computePaymentStatus } from "@/lib/invoiceMath";
+import { allocatePaymentOldestFirst, canReceivePayment, compareOldestFirst } from "@/lib/paymentAllocation";
 import { owedByCustomer, statementOwed, statementTotals, isStatementInvoice, daysSince } from "@/lib/customerInvoices";
 import { isInvoiceIncomplete, isOpenDelivery, purchaseOwed, type Invoice, type InvoicePrintInfo, type Product, type Purchase, type Vendor } from "@/lib/types";
-import { matchProduct } from "@/lib/ai/tools";
+import { matchProduct, resolveCustomerMatch } from "@/lib/ai/tools";
 import {
   getAllCustomers,
   getAllInvoices,
@@ -16,6 +17,9 @@ import {
   getInvoicePrintInfo,
   getInvoicesForCustomer,
   getPaymentsForInvoice,
+  getPaymentById,
+  changePayment,
+  recordCustomerPayment,
   saveInvoicePrintInfo,
 } from "./businessStore";
 import {
@@ -240,6 +244,39 @@ export const adminToolDefinitions: AdminToolDefinition[] = [
     readOnly: false,
   },
   {
+    name: "recordCustomerPayment",
+    description:
+      "The customer page's Record payment: one amount from a customer, applied to their unpaid invoices OLDEST FIRST (like KiotViet's 'Phân bổ vào hóa đơn'). The preview shows every open invoice with what it owes and how much of the money goes to it. Never more than the customer owes in total (outside apps can't create credit). Give customerId (or customerName), amount, and optionally method (Cash, Check, Zelle, Card, Bank transfer, Other), note and date (YYYY-MM-DD, today or earlier).",
+    input_schema: {
+      type: "object",
+      properties: { customerId: str, customerName: str, amount: num, method: str, note: str, date: dateStr("Day the money was received (default today).") },
+      required: ["amount"],
+    },
+    readOnly: false,
+  },
+  {
+    name: "adjustCustomerDebt",
+    description:
+      "The customer page's Adjust debt: lower what a customer owes WITHOUT counting it as money received (e.g. forgiving a small amount). Applied oldest invoice first, a reason is required, never more than they owe. To fix a payment entered with the wrong amount use changePayment instead.",
+    input_schema: {
+      type: "object",
+      properties: { customerId: str, customerName: str, amount: num, reason: str },
+      required: ["amount", "reason"],
+    },
+    readOnly: false,
+  },
+  {
+    name: "changePayment",
+    description:
+      "Fix a customer payment or debt adjustment (Payment history > Fix): action 'edit' sets the correct amount, action 'cancel' takes it back (kept, marked cancelled; never deleted). A reason is required. The invoice's balance and Paid/Partial/Unpaid status are recalculated; the preview shows them before and after. Find the paymentId with searchPayments (customerId or invoiceId). Refused if it would pay an invoice beyond its total or if the payment is already cancelled.",
+    input_schema: {
+      type: "object",
+      properties: { paymentId: str, action: { type: "string", enum: ["edit", "cancel"] }, amount: { type: "number", description: "The correct amount (edit only)." }, reason: str },
+      required: ["paymentId", "action", "reason"],
+    },
+    readOnly: false,
+  },
+  {
     name: "saveCustomInvoice",
     description:
       "Save the Custom Invoice (reprint) information for an invoice. Pass only what changes; the rest stays as saved (or as the app would pre-fill). template is 'professional' or 'simple'. from/shipTo are {name, address, phone, email?}; billTo is {address, phone}. Dates are YYYY-MM-DD ('' hides one). This never changes the invoice's customer, items, prices, totals or debt. The company block and terms are remembered for the next Custom Invoice.",
@@ -318,6 +355,19 @@ async function invoiceFromArgs(args: Args): Promise<Invoice> {
   const invoice = args.invoiceId ? await getInvoice(String(args.invoiceId)) : args.invoiceNumber ? await getInvoiceByNumber(String(args.invoiceNumber)) : null;
   if (!invoice) throw new NotFoundError("Invoice not found. Give its invoiceId or invoiceNumber.");
   return invoice;
+}
+
+async function customerFromArgs(args: Args) {
+  if (args.customerId) {
+    const c = await getCustomerById(String(args.customerId));
+    if (!c) throw new NotFoundError("Customer not found.");
+    return c;
+  }
+  if (!args.customerName) throw new DomainError("Give customerId or customerName.");
+  const m = await resolveCustomerMatch(String(args.customerName));
+  if (m.status === "match") return m.customer;
+  if (m.status === "ambiguous") throw new DomainError(`Which customer? ${m.candidates.map((c) => `${c.name} (customerId ${c.id})`).join(", ")}. Call again with customerId.`);
+  throw new NotFoundError(`No customer named "${args.customerName}".`);
 }
 
 async function purchaseFromArgs(args: Args): Promise<Purchase> {
@@ -644,6 +694,111 @@ async function run(name: string, args: Args, ctx: AdminToolContext): Promise<unk
       }
       await updateVendor(vendor.id, changes, operationId);
       return { status: "updated" };
+    }
+
+    case "recordCustomerPayment":
+    case "adjustCustomerDebt": {
+      const adjusting = name === "adjustCustomerDebt";
+      const customer = await customerFromArgs(args);
+      const amount = r2(Number(args.amount));
+      assertPositiveAmount(amount, "Amount");
+      const reason = adjusting ? optText(args.reason, "Reason", 500) : undefined;
+      if (adjusting && !reason) throw new DomainError("A reason is required to adjust a customer's debt.");
+      const method = adjusting ? undefined : optText(args.method, "Payment method", 100);
+      const note = adjusting ? undefined : optText(args.note, "Note");
+      const date = adjusting ? undefined : dateArg(args.date, "date");
+      if (date && date > storeDateKey()) throw new DomainError("The payment date can't be in the future.");
+      const open = (await getInvoicesForCustomer(customer.id)).filter(canReceivePayment).sort(compareOldestFirst);
+      const owed = r2(open.reduce((sum, i) => sum + i.balance, 0));
+      if (amount > owed + 0.001) throw new DomainError(`That is more than ${customer.name} owes ($${owed.toFixed(2)}).`);
+      if (previewOnly) {
+        const { allocations } = allocatePaymentOldestFirst(open, amount);
+        const applied = new Map(allocations.map((a) => [a.invoiceId, a.amount]));
+        return {
+          status: "preview",
+          preview: {
+            action: adjusting ? "Lower a customer's debt (adjustment, not money received), oldest invoice first" : "Record a customer payment, oldest invoice first",
+            customer: { id: customer.id, name: customer.name },
+            amount,
+            ...(adjusting ? { reason } : { method: method ?? "", date: date ?? storeDateKey() }),
+            debtBefore: owed,
+            debtAfter: r2(owed - amount),
+            invoices: open.map((i) => {
+              const a = applied.get(i.id) ?? 0;
+              const paidAfter = r2(i.amountPaid + a);
+              return { invoiceNumber: i.invoiceNumber, date: storeDateKey(i.date), total: i.total, paidBefore: i.amountPaid, stillOwed: i.balance, applied: a, statusAfter: computePaymentStatus(i.total, paidAfter, i.paymentStatus) };
+            }),
+          },
+          pinnedArgs: { customerId: customer.id, amount, ...(reason ? { reason } : {}), ...(method ? { method } : {}), ...(note ? { note } : {}), ...(date ? { date } : {}) },
+        };
+      }
+      // Noon on the chosen day keeps the date right whatever time zone the server runs in.
+      const paidAt = date && date !== storeDateKey() ? Date.parse(`${date}T12:00:00`) : undefined;
+      const saved = await recordCustomerPayment({
+        customerId: customer.id,
+        amount,
+        actor: "ai",
+        operationId,
+        ...(adjusting ? { kind: "adjustment" as const, reason } : { method, note, ...(paidAt ? { paidAt } : {}) }),
+      });
+      return {
+        status: "recorded",
+        customer: { id: customer.id, name: customer.name },
+        amount: saved.amount,
+        applied: saved.allocations.map((a) => ({ invoiceNumber: a.invoiceNumber, amount: a.amount, stillOwed: a.balanceAfter })),
+        link: `/customers/${customer.id}`,
+      };
+    }
+
+    case "changePayment": {
+      const payment = await getPaymentById(String(args.paymentId ?? ""));
+      if (!payment) throw new NotFoundError("Payment not found. Use searchPayments to find its id.");
+      const action = args.action === "edit" || args.action === "cancel" ? args.action : null;
+      if (!action) throw new DomainError("action must be 'edit' or 'cancel'.");
+      const reason = optText(args.reason, "Reason", 500);
+      if (!reason) throw new DomainError("A reason is required to change a payment.");
+      if (payment.cancelled) throw new DomainError("This payment was already cancelled.");
+      const newAmount = action === "cancel" ? 0 : r2(Number(args.amount));
+      if (action === "edit") assertPositiveAmount(newAmount, "Amount");
+      if (action === "edit" && newAmount === payment.amount) throw new DomainError("The new amount is the same as the old one.");
+      const delta = r2(newAmount - payment.amount);
+      if (previewOnly) {
+        let effect: Record<string, unknown>;
+        if (payment.invoiceId) {
+          const inv = await getInvoice(payment.invoiceId);
+          if (!inv) throw new NotFoundError("The invoice this payment belongs to was not found.");
+          const paid = r2(inv.amountPaid + delta);
+          if (delta > 0 && paid > inv.total) throw new DomainError(`That would pay invoice #${inv.invoiceNumber} more than its total ($${inv.total.toFixed(2)}).`);
+          effect = {
+            invoice: { invoiceNumber: inv.invoiceNumber, total: inv.total },
+            before: { amountPaid: inv.amountPaid, balance: inv.balance, status: inv.paymentStatus },
+            after: { amountPaid: paid, balance: r2(inv.total - paid), status: computePaymentStatus(inv.total, paid, inv.paymentStatus) },
+          };
+        } else {
+          const customer = payment.customerId ? await getCustomerById(payment.customerId) : null;
+          const before = customer?.credit ?? 0;
+          if (r2(before + delta) < 0) throw new DomainError(`The customer only has $${before.toFixed(2)} credit left.`);
+          effect = { customerCredit: { before, after: r2(before + delta) } };
+        }
+        return {
+          status: "preview",
+          preview: {
+            action: action === "cancel" ? "Cancel a payment (kept, marked cancelled)" : "Change a payment's amount",
+            payment: { id: payment.id, kind: payment.kind ?? "payment", amount: payment.amount, date: storeDateKey(payment.paidAt ?? payment.createdAt), method: payment.method ?? "" },
+            newAmount,
+            reason,
+            ...effect,
+          },
+          pinnedArgs: { paymentId: payment.id, action, reason, ...(action === "edit" ? { amount: newAmount } : {}) },
+        };
+      }
+      const saved = await changePayment({ paymentId: payment.id, action, amount: action === "edit" ? newAmount : undefined, reason, actor: "ai", operationId });
+      return {
+        status: action === "cancel" ? "cancelled" : "updated",
+        payment: { id: saved.payment.id, amount: saved.payment.amount, cancelled: saved.payment.cancelled ?? false },
+        ...(saved.invoice ? { invoice: invoiceSummary(saved.invoice), link: `/invoices/${saved.invoice.id}` } : {}),
+        ...(saved.credit !== undefined ? { customerCredit: saved.credit } : {}),
+      };
     }
 
     case "saveCustomInvoice": {

@@ -122,6 +122,34 @@ describe("selling side", () => {
     expect(read("invoices/i1")).toMatchObject({ amountPaid: 20, balance: 38, paymentStatus: "partial" });
   });
 
+  it("records one customer payment oldest invoice first, never more than owed; fixes and cancels it; adjusts debt with a reason", async () => {
+    invoice("i1", { date: Date.parse("2026-10-01T20:00:00Z") });
+    invoice("i2", { date: Date.parse("2026-10-05T20:00:00Z") });
+    expect((await run("recordCustomerPayment", { customerName: "hoa lee", amount: 200 })).status).toBe("error");
+    const { preview, saved } = await previewThenConfirm("recordCustomerPayment", { customerName: "hoa lee", amount: 70, method: "Zelle" }, "payments");
+    expect(preview.preview).toMatchObject({ debtBefore: 116, debtAfter: 46 });
+    expect((preview.preview!.invoices as { invoiceNumber: string; applied: number }[]).map((i) => [i.invoiceNumber, i.applied])).toEqual([["I1", 58], ["I2", 12]]);
+    expect(saved.status).toBe("recorded");
+    expect(read("invoices/i1")).toMatchObject({ amountPaid: 58, paymentStatus: "paid" });
+    expect(read("invoices/i2")).toMatchObject({ amountPaid: 12, balance: 46, paymentStatus: "partial" });
+
+    const i2Payment = [...store.docs.entries()].find(([k, v]) => k.startsWith("payments/") && (v as { invoiceId: string }).invoiceId === "i2")![0].split("/")[1];
+    expect((await run("changePayment", { paymentId: i2Payment, action: "edit", amount: 10 })).status).toBe("error"); // no reason
+    const fix = await previewThenConfirm("changePayment", { paymentId: i2Payment, action: "edit", amount: 10, reason: "typed 12" }, "payments");
+    expect(fix.preview.preview).toMatchObject({ before: { balance: 46 }, after: { balance: 48, status: "partial" } });
+    expect(fix.saved.status).toBe("updated");
+    expect(read("invoices/i2")).toMatchObject({ amountPaid: 10, balance: 48 });
+    const cancel = await previewThenConfirm("changePayment", { paymentId: i2Payment, action: "cancel", reason: "check bounced" }, "payments");
+    expect(cancel.saved.status).toBe("cancelled");
+    expect(read("invoices/i2")).toMatchObject({ amountPaid: 0, paymentStatus: "unpaid" });
+    expect(read(`payments/${i2Payment}`)).toMatchObject({ cancelled: true });
+
+    expect((await run("adjustCustomerDebt", { customerId: "c1", amount: 1 })).status).toBe("error"); // no reason
+    const adj = await previewThenConfirm("adjustCustomerDebt", { customerId: "c1", amount: 8, reason: "damaged box" }, "payments");
+    expect(adj.saved.status).toBe("recorded");
+    expect(read("invoices/i2")).toMatchObject({ amountPaid: 8, balance: 50 });
+  });
+
   it("adds an item, voids an invoice, and sets a delivery's final prices — each after confirm", async () => {
     invoice("i1", {});
     const { preview } = await previewThenConfirm("addInvoiceItem", { invoiceId: "i1", productName: "milo", quantity: 1, reason: "thêm" }, "invoices");

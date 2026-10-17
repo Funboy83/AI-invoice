@@ -216,6 +216,7 @@ function hydrateCustomer(id: string, data: Record<string, unknown>): Customer {
     shippingAddress: data.shippingAddress as string | undefined,
     notes: data.notes as string | undefined,
     defaultShipping: data.defaultShipping as number | undefined,
+    ...(typeof data.credit === "number" && data.credit > 0 ? { credit: data.credit } : {}),
     active: (data.active as boolean) ?? true,
     createdAt: toMillis(data.createdAt),
     updatedAt: toMillis(data.updatedAt),
@@ -578,6 +579,12 @@ export async function getPaymentsForInvoice(invoiceId: string): Promise<Payment[
     .map((d) => ({ id: d.id, ...d.data() } as Payment))
     .filter((p) => p.invoiceId === invoiceId)
     .sort((a, b) => b.createdAt - a.createdAt);
+}
+
+/** Live list of one customer's payments (including cancelled and edited ones, for the visible history), newest first. */
+export function watchPaymentsForCustomer(customerId: string, cb: (payments: Payment[]) => void, onError?: (err: unknown) => void) {
+  const q = query(paymentsCol, where("customerId", "==", customerId));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as Payment).sort((a, b) => b.createdAt - a.createdAt)), onError);
 }
 
 export async function getAllPayments(): Promise<Payment[]> {
