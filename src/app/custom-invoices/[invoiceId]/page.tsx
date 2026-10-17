@@ -8,6 +8,7 @@ import clsx from "clsx";
 import { getCustomerById, getInvoice } from "@/lib/store";
 import { getInvoicePrintInfoApi, saveInvoicePrintInfoApi, toDateKey } from "@/lib/businessApi";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
+import { printPage } from "@/lib/printPage";
 import type { CustomInvoiceTemplate, Invoice, InvoicePrintInfo } from "@/lib/types";
 import ProfessionalPrint from "@/components/customInvoice/ProfessionalPrint";
 import SimplePrint from "@/components/customInvoice/SimplePrint";
@@ -125,7 +126,7 @@ function CustomInvoiceContent() {
     if (!autoPrint.current || !invoice || !form) return;
     autoPrint.current = false;
     router.replace(`/custom-invoices/${invoiceId}`);
-    setTimeout(() => window.print(), 50);
+    setTimeout(() => void printPage(), 50);
   }, [invoice, form, invoiceId, router]);
 
   if (loadError) return <div className="p-8 text-slate-400 text-sm">{loadError}</div>;
@@ -142,7 +143,7 @@ function CustomInvoiceContent() {
       const saved = await saveInvoicePrintInfoApi(authedFetch, form);
       setSavedAt(saved.updatedAt);
       setEditing(false);
-      if (thenPrint) window.print();
+      if (thenPrint) void printPage();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save.");
     } finally {
@@ -198,7 +199,7 @@ function CustomInvoiceContent() {
                 <Pencil size={15} /> Edit
               </button>
               <button
-                onClick={() => window.print()}
+                onClick={() => void printPage()}
                 className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
               >
                 <Printer size={15} /> Print
@@ -370,7 +371,9 @@ function CustomInvoiceContent() {
         )}
       </div>
 
-      <div className="hidden print:block">{preview}</div>
+      <div className="hidden print:block" data-print-root data-print-name={`invoice-${invoice.invoiceNumber}`}>
+        {preview}
+      </div>
     </>
   );
 }
