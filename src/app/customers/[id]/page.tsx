@@ -101,6 +101,14 @@ export default function CustomerDetailPage() {
         {customer.notes && <p className="text-sm text-slate-600 mt-2 whitespace-pre-line">{customer.notes}</p>}
       </div>
 
+      {/* Up top so it is seen without scrolling: combine several invoices into one page to send the customer. */}
+      <Link
+        href={`/customers/${customer.id}/payment-request`}
+        className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white shadow-sm hover:bg-emerald-700 md:w-auto md:inline-flex"
+      >
+        <FileText size={18} /> Payment request (combine invoices)
+      </Link>
+
       {/* Balance summary: the numbers to chase. */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div
@@ -126,13 +134,6 @@ export default function CustomerDetailPage() {
         <SummaryCard label="Total billed" value={`$${summary.totalBilled.toFixed(2)}`} sub={`${summary.unpaid.length + summary.paid.length} invoices`} />
         <SummaryCard label="Total paid" value={`$${summary.totalPaid.toFixed(2)}`} sub={`${summary.paid.length} fully paid`} />
       </div>
-
-      <Link
-        href={`/customers/${customer.id}/payment-request`}
-        className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white hover:bg-emerald-700 md:w-auto md:inline-flex"
-      >
-        <FileText size={16} /> Payment request
-      </Link>
 
       {/* Unpaid / Paid / All */}
       <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm font-medium">
