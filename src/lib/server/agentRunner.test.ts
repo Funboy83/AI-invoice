@@ -17,6 +17,7 @@ import {
   text,
   toolUse,
   lastToolResult,
+  toolResultsInOrder,
   scriptedModel,
   deps,
   deferred,
@@ -341,6 +342,37 @@ describe("confirmation rules are preserved", () => {
     await driveJob(id2, deps(model));
     expect(store.count("products")).toBe(3);
     expect(lastToolResult(model.calls[1])).toMatchObject({ status: "needs_confirmation" });
+  });
+
+  it("a brand-new product or customer is only previewed until she taps OK in her reply", async () => {
+    const customersBefore = store.count("customers");
+    const { jobId: id1 } = await say("thêm sản phẩm Xoài sấy giá 12 và khách Zzz Quán Mới");
+    const model1 = scriptedModel([
+      [
+        toolUse("p1", "createProduct", { name: "Xoài sấy", defaultPrice: 12, confirmed: true }), // not her reply yet
+        toolUse("c1", "createCustomer", { name: "Zzz Quán Mới", phone: "0909", confirmed: true }),
+      ],
+      [toolUse("q1", "requestUserInput", { question: "Lưu sản phẩm Xoài sấy $12 và khách Zzz Quán Mới?" })],
+    ]);
+    await driveJob(id1, deps(model1));
+    expect(store.count("products")).toBe(3);
+    expect(store.count("customers")).toBe(customersBefore);
+    const [productResult, customerResult] = toolResultsInOrder(model1.calls[1]).map((r) => r.result);
+    expect(productResult).toMatchObject({ status: "needs_confirmation", preview: { name: "Xoài sấy", defaultPrice: 12 } });
+    expect(customerResult).toMatchObject({ status: "needs_confirmation", preview: { name: "Zzz Quán Mới", phone: "0909" } });
+    expect((productResult.confirmChoices as string[])[0]).toContain("OK");
+
+    const { jobId: id2 } = await say("OK, lưu");
+    const model2 = scriptedModel([
+      [
+        toolUse("p2", "createProduct", { name: "Xoài sấy", defaultPrice: 12, confirmed: true }),
+        toolUse("c2", "createCustomer", { name: "Zzz Quán Mới", phone: "0909", confirmed: true }),
+      ],
+      [text("Đã lưu")],
+    ]);
+    await driveJob(id2, deps(model2));
+    expect(store.count("products")).toBe(4);
+    expect(store.count("customers")).toBe(customersBefore + 1);
   });
 
   it("if the AI ends its reply right after 'needs_new_customer', the job waits for her instead of claiming completion", async () => {

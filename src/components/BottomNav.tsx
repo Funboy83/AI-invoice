@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Sparkles, FileText, FileStack, Users, Boxes } from "lucide-react";
+import { Sparkles, FileText, FileStack, Users, Boxes, ShoppingCart } from "lucide-react";
 import clsx from "clsx";
 
 // Same per-section colors as the desktop sidebar; the active tab lights up in its own color.
@@ -12,6 +12,7 @@ const tabs = [
   { href: "/custom-invoices", label: "Custom Invoice", icon: FileStack, active: "text-violet-600", pill: "bg-violet-100" },
   { href: "/customers", label: "Customers", icon: Users, active: "text-emerald-600", pill: "bg-emerald-100" },
   { href: "/products", label: "Products", icon: Boxes, active: "text-amber-600", pill: "bg-amber-100" },
+  { href: "/purchases", label: "Buy", icon: ShoppingCart, active: "text-rose-600", pill: "bg-rose-100", also: "/vendors" },
 ];
 
 export default function BottomNav() {
@@ -20,8 +21,8 @@ export default function BottomNav() {
   return (
     <nav className="md:hidden print:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 pb-[env(safe-area-inset-bottom)]">
       <div className="flex items-stretch">
-        {tabs.map(({ href, label, icon: Icon, active: activeClass, pill }) => {
-          const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+        {tabs.map(({ href, label, icon: Icon, active: activeClass, pill, also }) => {
+          const active = href === "/" ? pathname === "/" : pathname.startsWith(href) || (!!also && pathname.startsWith(also));
           return (
             <Link
               key={href}

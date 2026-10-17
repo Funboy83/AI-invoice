@@ -25,7 +25,7 @@ import {
   DomainError,
   NotFoundError,
 } from "@/lib/server/businessStore";
-import { assertNonNegativeAmount, calcTotals } from "@/lib/invoiceMath";
+import { assertFiniteAmount, assertNonNegativeAmount, assertPositiveAmount, calcTotals, computePaymentStatus } from "@/lib/invoiceMath";
 import { isOpenDelivery, type Customer, type Invoice, type InvoiceLineItem, type InvoiceStatus, type Product } from "@/lib/types";
 
 /** Anthropic tool-use definitions exposed to the assistant. */
@@ -52,7 +52,7 @@ export const toolDefinitions = [
   {
     name: "createProduct",
     description:
-      "Create a new product. Only call this after searchProduct shows no good match, or after the user explicitly confirms they want a new, separate product despite similar existing ones. Set force=true only after that explicit confirmation.",
+      "Create a new product. Only call this after searchProduct shows no good match, or after the user explicitly confirms they want a new, separate product despite similar existing ones. Set force=true only after that explicit confirmation. In the chat nothing is saved on the first call: it returns needs_confirmation with a preview — show it, ask with requestUserInput (use the confirmChoices as options), and call again with confirmed=true only after she answers OK.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -66,6 +66,7 @@ export const toolDefinitions = [
         barcode: { type: "string" },
         notes: { type: "string" },
         force: { type: "boolean" },
+        confirmed: { type: "boolean", description: "Set true only after the user confirmed the preview in reply to your question." },
       },
       required: ["name", "defaultPrice"],
     },
@@ -121,7 +122,7 @@ export const toolDefinitions = [
   {
     name: "createCustomer",
     description:
-      "Create a new customer. Only call after searchCustomer shows no good match, or after explicit user confirmation despite similar existing customers (force=true).",
+      "Create a new customer. Only call after searchCustomer shows no good match, or after explicit user confirmation despite similar existing customers (force=true). Nothing is saved on the first call: it returns needs_confirmation with a preview — show it, ask with requestUserInput (use the confirmChoices as options), and call again with confirmed=true only after she answers OK.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -135,6 +136,7 @@ export const toolDefinitions = [
         notes: { type: "string" },
         defaultShipping: { type: "number" },
         force: { type: "boolean" },
+        confirmed: { type: "boolean", description: "Set true only after the user confirmed the preview in reply to your question." },
       },
       required: ["name"],
     },
@@ -487,6 +489,25 @@ export interface ToolContext {
   trace?: (phase: string, ms: number, fields?: Record<string, number>) => void;
 }
 
+/**
+ * A new customer/product from the chat is saved only once she has seen what will be created and said OK: the call must
+ * be in her reply to the AI's question (canConfirm) and carry confirmed=true (or force=true, her "create a new one"
+ * answer to the similar-record question). Typos in a quick "thêm khách X" used to go straight into the list.
+ */
+function isConfirmedCreate(args: ToolArgs, ctx: ToolContext): boolean {
+  return Boolean(ctx.canConfirm) && (args.confirmed === true || args.force === true);
+}
+
+function createConfirmation(kind: "customer" | "product", preview: Record<string, unknown>) {
+  const label = kind === "customer" ? "khách hàng" : "sản phẩm";
+  return {
+    status: "needs_confirmation",
+    message: `Nothing saved yet. Show the user this new ${kind} (every field in the preview) and ask with requestUserInput whether to save it, using confirmChoices as the options. If she says OK, call again with the same details and confirmed=true. If she wants changes, apply them and show the preview again. If she cancels, save nothing.`,
+    preview,
+    confirmChoices: [`OK, lưu ${label}`, "Sửa lại", "Hủy"],
+  };
+}
+
 /** Ledger-friendly id for one tool call: the same (job, tool_use id) always maps to the same operation. */
 export function operationIdFor(jobId: string, toolUseId: string): string {
   return `${jobId}__${toolUseId}`.replace(/[^A-Za-z0-9_-]/g, "_");
@@ -535,20 +556,20 @@ function buildAliasSuggestion(kind: "product" | "customer", id: string, canonica
   return { kind, id, name: canonicalName, inputText: inputText.trim() };
 }
 
-function summarizeProduct(p: Product) {
+export function summarizeProduct(p: Product) {
   return { id: p.id, name: p.name, aliases: p.aliases, defaultUnit: p.defaultUnit, defaultPrice: p.defaultPrice, category: p.category };
 }
-function summarizeCustomer(c: Customer) {
+export function summarizeCustomer(c: Customer) {
   return { id: c.id, name: c.name, aliases: c.aliases, phone: c.phone, address: c.address };
 }
 
-type ProductMatch =
+export type ProductMatch =
   | { status: "match"; product: Product }
   | { status: "ambiguous"; query: string; candidates: ReturnType<typeof summarizeProduct>[] }
   | { status: "not_found"; query: string };
 
 /** Pure: match `query` against an already-loaded catalog (so a multi-item order reads the catalog once). */
-function matchProduct(query: string, products: Product[]): ProductMatch {
+export function matchProduct(query: string, products: Product[]): ProductMatch {
   const matches = findSimilarWithAliases(query, products, (p) => p.name, (p) => p.aliases, AMBIGUOUS_THRESHOLD);
   if (matches.length === 0) return { status: "not_found", query };
   const confident = pickConfident(query, matches, (p) => [p.name, ...p.aliases]);
@@ -565,7 +586,7 @@ function matchProduct(query: string, products: Product[]): ProductMatch {
   };
 }
 
-async function resolveProductMatch(query: string): Promise<ProductMatch> {
+export async function resolveProductMatch(query: string): Promise<ProductMatch> {
   return matchProduct(query, await getAllProducts());
 }
 
@@ -574,7 +595,7 @@ type CustomerMatch =
   | { status: "ambiguous"; query: string; candidates: ReturnType<typeof summarizeCustomer>[] }
   | { status: "not_found"; query: string };
 
-async function resolveCustomerMatch(query: string): Promise<CustomerMatch> {
+export async function resolveCustomerMatch(query: string): Promise<CustomerMatch> {
   const customers = await getAllCustomers();
   const matches = findSimilarWithAliases(query, customers, (c) => c.name, (c) => c.aliases, AMBIGUOUS_THRESHOLD);
   if (matches.length === 0) return { status: "not_found", query };
@@ -800,12 +821,13 @@ async function resolveOrder(args: ToolArgs, ctx: ToolContext, mode: "draft" | "d
  * unknown, so an incomplete line is still incomplete when it is saved); for a draft, a price the app filled in from
  * the customer's last price or the catalog is pinned too.
  */
-function orderPreview(args: ToolArgs, order: ResolvedOrder, mode: "draft" | "delivery", shipping: number, discount: number) {
+function orderPreview(args: ToolArgs, order: ResolvedOrder, mode: "draft" | "invoice" | "delivery", shipping: number, discount: number) {
   const rawItems = (args.items as Array<Record<string, unknown>>) ?? [];
+  const draftLike = mode !== "delivery";
   const { customer, resolvedItems, priceWarnings } = order;
   const pinnedItems = resolvedItems.map((it, i) => {
     const raw = rawItems[i] ?? {};
-    const keepPrice = mode === "draft" && !it.incomplete ? it.price : raw.price;
+    const keepPrice = draftLike && !it.incomplete ? it.price : raw.price;
     return {
       productId: it.productId,
       ...(raw.quantity !== undefined ? { quantity: raw.quantity } : {}),
@@ -817,7 +839,7 @@ function orderPreview(args: ToolArgs, order: ResolvedOrder, mode: "draft" | "del
   return {
     status: "preview",
     preview: {
-      kind: mode === "draft" ? "invoice draft" : "delivery order",
+      kind: mode === "draft" ? "invoice draft" : mode === "invoice" ? "invoice (finished, unpaid; stock is taken now)" : "delivery order",
       customer: { id: customer.id, name: customer.name },
       items: resolvedItems.map((it) => ({
         productId: it.productId,
@@ -833,7 +855,7 @@ function orderPreview(args: ToolArgs, order: ResolvedOrder, mode: "draft" | "del
       subtotal,
       total,
       priceWarnings,
-      ...(mode === "draft"
+      ...(draftLike
         ? { incompleteItems: resolvedItems.filter((it) => it.incomplete).map((it) => it.productName) }
         : { unpricedItems: resolvedItems.filter((it) => it.price === 0).map((it) => it.productName) }),
     },
@@ -842,7 +864,7 @@ function orderPreview(args: ToolArgs, order: ResolvedOrder, mode: "draft" | "del
       customerId: customer.id,
       customerName: undefined,
       shipping,
-      ...(mode === "draft" ? { discount } : {}),
+      ...(draftLike ? { discount } : {}),
       items: pinnedItems,
       confirmed: undefined,
     },
@@ -947,6 +969,232 @@ async function productAliasPreview(args: ToolArgs) {
   };
 }
 
+/* ------------------- customer previews (outside-AI confirm step, ctx.previewOnly) ------------------- */
+
+/** The customer fields updateCustomer may change, in the order a preview lists them. */
+const CUSTOMER_EDIT_FIELDS = ["name", "contactName", "phone", "email", "address", "shippingAddress", "notes", "defaultShipping", "active"] as const;
+
+function customerFieldValue(field: string, value: unknown): unknown {
+  if (field === "active") return Boolean(value);
+  if (field === "defaultShipping") return Number(value);
+  return String(value);
+}
+
+/** What createCustomer WOULD save. Like products: force=true previews with a warning listing the similar customers. */
+async function customerCreatePreview(args: ToolArgs) {
+  const name = String(args.name ?? "").trim();
+  if (!name) return { status: "error", message: "A customer needs a name." };
+  const fields: Record<string, unknown> = { name };
+  for (const field of ["contactName", "phone", "email", "address", "shippingAddress", "notes"] as const) if (args[field]) fields[field] = String(args[field]);
+  if (args.defaultShipping !== undefined) {
+    fields.defaultShipping = Number(args.defaultShipping);
+    assertNonNegativeAmount(fields.defaultShipping as number, "defaultShipping");
+  }
+  const aliases = (Array.isArray(args.aliases) ? args.aliases : []).map((a) => String(a).trim()).filter(Boolean);
+  const check = await resolveCustomerMatch(name);
+  const similar = check.status === "match" ? [summarizeCustomer(check.customer)] : check.status === "ambiguous" ? check.candidates : [];
+  return {
+    status: "preview",
+    preview: {
+      action: "Create a new customer",
+      customer: { ...fields, aliases },
+      ...(similar.length > 0 ? { warning: "Similar customers already exist. Saving makes a new, separate customer.", similarCustomers: similar } : {}),
+    },
+    // confirmed: the person's yes to this preview is the chat's "OK, lưu khách hàng".
+    pinnedArgs: { ...fields, aliases, force: similar.length > 0, confirmed: true },
+  };
+}
+
+/** What updateCustomer WOULD change: each field as it is now and as it would be. Past invoices keep their customer name. */
+async function customerUpdatePreview(args: ToolArgs) {
+  const customer = await getCustomerById(String(args.customerId));
+  if (!customer) return { status: "not_found", message: "Customer not found." };
+  const changes: { field: string; from: unknown; to: unknown }[] = [];
+  const pinned: Record<string, unknown> = { customerId: customer.id };
+  for (const field of CUSTOMER_EDIT_FIELDS) {
+    if (args[field] === undefined) continue;
+    const to = customerFieldValue(field, args[field]);
+    if (field === "name" && !String(to).trim()) return { status: "error", message: "The name cannot be empty." };
+    if (field === "defaultShipping") assertNonNegativeAmount(to as number, field);
+    const from = (customer as unknown as Record<string, unknown>)[field] ?? null;
+    if (from === to) continue;
+    changes.push({ field, from, to });
+    pinned[field] = to;
+  }
+  if (changes.length === 0) return { status: "unchanged", message: "Nothing to change: the customer already has these values." };
+  return {
+    status: "preview",
+    preview: {
+      action: changes.length === 1 && changes[0].field === "active" ? (changes[0].to ? "Show a hidden customer again" : "Hide a customer (marked inactive, nothing deleted)") : "Change a customer",
+      customer: { id: customer.id, name: customer.name },
+      changes,
+    },
+    pinnedArgs: pinned,
+  };
+}
+
+async function customerAliasPreview(args: ToolArgs) {
+  const alias = String(args.alias ?? "").trim();
+  if (!alias) return { status: "error", message: "The nickname is empty." };
+  const customer = await getCustomerById(String(args.customerId));
+  if (!customer) return { status: "not_found", message: "Customer not found." };
+  if (customer.aliases.some((a) => a.toLowerCase() === alias.toLowerCase())) {
+    return { status: "unchanged", message: `"${alias}" is already a nickname of ${customer.name}.` };
+  }
+  return {
+    status: "preview",
+    preview: { action: "Add a nickname to a customer", customer: { id: customer.id, name: customer.name, aliases: customer.aliases }, alias },
+    pinnedArgs: { customerId: customer.id, alias },
+  };
+}
+
+/* ------------- invoice line edits (shared by the chat tools and their outside-AI previews) ------------- */
+
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Adds `quantity` of a product, or increases it when the product is already on the invoice. */
+function addLine(items: InvoiceLineItem[], chosen: Product, quantity: number, unit: string | undefined, price: number): InvoiceLineItem[] {
+  const out = [...items];
+  const existingIdx = out.findIndex((it) => it.productId === chosen.id);
+  if (existingIdx >= 0) {
+    const merged = { ...out[existingIdx] };
+    merged.quantity += quantity;
+    merged.lineTotal = r2(merged.quantity * merged.price);
+    out[existingIdx] = merged;
+  } else {
+    out.push({ productId: chosen.id, productName: chosen.name, quantity, unit: unit || chosen.defaultUnit, price, lineTotal: r2(quantity * price), barcode: chosen.barcode });
+  }
+  return out;
+}
+
+type LineMatch = { productId?: string; productName?: string };
+
+function updateLine(invoice: Invoice, match: LineMatch, changes: { quantity?: number; price?: number; unit?: string }): InvoiceLineItem[] {
+  const idx = findLineIndex(invoice, match);
+  if (idx < 0) throw new DomainError("Could not find that line item on the invoice.");
+  const items = [...invoice.items];
+  const line = { ...items[idx] };
+  if (changes.quantity !== undefined) line.quantity = changes.quantity;
+  if (changes.price !== undefined) line.price = changes.price;
+  if (changes.unit !== undefined) line.unit = changes.unit;
+  line.lineTotal = r2(line.quantity * line.price);
+  items[idx] = line;
+  return items;
+}
+
+function removeLine(invoice: Invoice, match: LineMatch): InvoiceLineItem[] {
+  const idx = findLineIndex(invoice, match);
+  if (idx < 0) throw new DomainError("Could not find that line item on the invoice.");
+  return invoice.items.filter((_, i) => i !== idx);
+}
+
+/** The same line, named so it can't match another one: by product id when it has one, else by its exact name. */
+function pinLine(invoice: Invoice, match: LineMatch): LineMatch {
+  const idx = findLineIndex(invoice, match);
+  if (idx < 0) throw new DomainError("Could not find that line item on the invoice.");
+  const line = invoice.items[idx];
+  return line.productId ? { productId: line.productId } : { productName: line.productName };
+}
+
+/** "Chốt giá": the delivery's lines with the given prices; every line still at $0 must get one. */
+function priceDeliveryLines(invoice: Invoice, prices: Array<Record<string, unknown>>): InvoiceLineItem[] {
+  const items = invoice.items.map((it) => ({ ...it }));
+  const priced = new Set<number>();
+  for (const p of prices) {
+    const idx = findLineIndex({ ...invoice, items }, { productId: p.productId as string | undefined, productName: p.productName as string | undefined });
+    if (idx < 0) throw new DomainError(`"${p.productName ?? p.productId}" is not on delivery #${invoice.invoiceNumber}.`);
+    items[idx].price = Number(p.price);
+    items[idx].lineTotal = r2(items[idx].quantity * items[idx].price);
+    priced.add(idx);
+  }
+  const missing = items.filter((it, i) => it.price === 0 && !priced.has(i)).map((it) => it.productName);
+  if (missing.length) throw new DomainError(`Still no price for: ${missing.join(", ")}. Ask the user for these prices (an explicit 0 is allowed for a free item).`);
+  return items;
+}
+
+async function invoiceByIdOrNumber(args: ToolArgs): Promise<Invoice | null> {
+  if (args.invoiceId) return getInvoiceDoc(String(args.invoiceId));
+  if (args.invoiceNumber) return getInvoiceByNumber(String(args.invoiceNumber));
+  return null;
+}
+
+const lineSummary = (it: InvoiceLineItem) => ({ productId: it.productId, productName: it.productName, quantity: it.quantity, unit: it.unit, price: it.price, lineTotal: it.lineTotal });
+
+/**
+ * What an invoice change WOULD do, for the outside-AI confirm step: the invoice's money and status now and after,
+ * computed with the same math the save uses (calcTotals, computePaymentStatus). Nothing is written.
+ */
+function invoiceEditPreview(
+  before: Invoice,
+  action: string,
+  change: { items?: InvoiceLineItem[]; shipping?: number; discount?: number; status?: InvoiceStatus },
+  pinnedArgs: Record<string, unknown>,
+  extra: Record<string, unknown> = {}
+) {
+  const items = change.items ?? before.items;
+  for (const it of items) {
+    assertNonNegativeAmount(it.quantity, `Quantity of ${it.productName}`);
+    assertNonNegativeAmount(it.price, `Price of ${it.productName}`);
+  }
+  const shipping = change.shipping ?? before.shipping;
+  const discount = change.discount ?? before.discount;
+  assertFiniteAmount(shipping, "shipping");
+  assertFiniteAmount(discount, "discount");
+  const { subtotal, total } = calcTotals(items, shipping, discount);
+  const paymentStatus = computePaymentStatus(total, before.amountPaid, change.status ?? before.paymentStatus);
+  return {
+    status: "preview",
+    preview: {
+      action,
+      invoice: { id: before.id, invoiceNumber: before.invoiceNumber, customerName: before.customerName, date: before.date },
+      ...(change.items ? { itemsBefore: before.items.map(lineSummary), itemsAfter: items.map(lineSummary) } : {}),
+      before: { shipping: before.shipping, discount: before.discount, subtotal: before.subtotal, total: before.total, amountPaid: before.amountPaid, balance: before.balance, status: before.paymentStatus },
+      after: { shipping, discount, subtotal, total, amountPaid: before.amountPaid, balance: r2(total - before.amountPaid), status: paymentStatus },
+      ...extra,
+    },
+    pinnedArgs,
+  };
+}
+
+/** What updateInvoice WOULD change (shipping, discount, notes, status incl. void, customer), with money before/after. */
+async function invoiceFieldsPreview(args: ToolArgs) {
+  const invoice = await getInvoiceDoc(String(args.invoiceId));
+  if (!invoice) return { status: "not_found", message: "Invoice not found." };
+  const status = args.status !== undefined ? (String(args.status) as InvoiceStatus) : undefined;
+  if (status && !["draft", "unpaid", "partial", "paid", "void"].includes(status)) return { status: "error", message: "Unknown status." };
+  const pinned: Record<string, unknown> = { invoiceId: invoice.id, reason: String(args.reason ?? "Updated by AI assistant") };
+  const changes: { field: string; from: unknown; to: unknown }[] = [];
+  const note = (field: string, from: unknown, to: unknown) => {
+    if (from !== to) changes.push({ field, from: from ?? null, to });
+    pinned[field] = to;
+  };
+  if (args.shipping !== undefined) note("shipping", invoice.shipping, Number(args.shipping));
+  if (args.discount !== undefined) note("discount", invoice.discount, Number(args.discount));
+  if (args.notes !== undefined) note("notes", invoice.notes, String(args.notes));
+  if (status) note("status", invoice.paymentStatus, status);
+  if (args.customerId !== undefined) {
+    const customer = await getCustomerById(String(args.customerId));
+    if (!customer) return { status: "not_found", message: "Customer not found." };
+    note("customerId", invoice.customerId, customer.id);
+    note("customerName", invoice.customerName, customer.name);
+  }
+  if (changes.length === 0) return { status: "unchanged", message: "Nothing to change: the invoice already has these values." };
+  const warnings: string[] = [];
+  if (status === "void") warnings.push("Voiding cancels the invoice: it stops counting in the customer's debt and its stock goes back. It is kept (marked void), not deleted.");
+  if (status === "void" && invoice.amountPaid > 0) warnings.push(`$${invoice.amountPaid.toFixed(2)} was already paid on this invoice; that payment stays recorded.`);
+  return invoiceEditPreview(
+    invoice,
+    status === "void" ? "Void (cancel) an invoice" : "Change an invoice",
+    {
+      ...(pinned.shipping !== undefined ? { shipping: pinned.shipping as number } : {}),
+      ...(pinned.discount !== undefined ? { discount: pinned.discount as number } : {}),
+      ...(status ? { status } : {}),
+    },
+    pinned,
+    { changes, ...(warnings.length ? { warnings } : {}) }
+  );
+}
+
 /**
  * Runs one tool. Business-rule failures (DomainError) of mutating tools come back as a normal `error`/`not_found`
  * result for the AI. Anything else (network, Firestore outage…) is rethrown so the job retries the SAME operation
@@ -990,6 +1238,18 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
         }
       }
       if (ctx.previewOnly) return productCreatePreview(args);
+      if (ctx.channel !== "api" && !isConfirmedCreate(args, ctx)) {
+        return createConfirmation("product", {
+          name: name_,
+          aliases: (args.aliases as string[]) ?? [],
+          defaultUnit: args.defaultUnit ? String(args.defaultUnit) : "unit",
+          defaultPrice: Number(args.defaultPrice),
+          ...(args.cost !== undefined ? { cost: Number(args.cost) } : {}),
+          ...(args.quantity !== undefined ? { quantity: Number(args.quantity) } : {}),
+          ...(args.category ? { category: String(args.category) } : {}),
+          ...(args.notes ? { notes: String(args.notes) } : {}),
+        });
+      }
       const product = await createProductDoc({
         name: name_,
         aliases: (args.aliases as string[]) ?? [],
@@ -1039,7 +1299,8 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
 
     case "createCustomer": {
       const name_ = String(args.name);
-      if (!args.force || !ctx.canConfirm) {
+      // An outside-AI preview may carry force=true: the person's confirm of that preview is the explicit "yes".
+      if (!args.force || !(ctx.canConfirm || ctx.previewOnly)) {
         const check = await resolveCustomerMatch(name_);
         if (check.status !== "not_found") {
           return {
@@ -1048,6 +1309,20 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
             ...(check.status === "match" ? { candidates: [summarizeCustomer(check.customer)] } : { candidates: check.candidates }),
           };
         }
+      }
+      if (ctx.previewOnly) return customerCreatePreview(args);
+      if (!isConfirmedCreate(args, ctx)) {
+        return createConfirmation("customer", {
+          name: name_,
+          aliases: (args.aliases as string[]) ?? [],
+          ...(args.contactName ? { contactName: String(args.contactName) } : {}),
+          ...(args.phone ? { phone: String(args.phone) } : {}),
+          ...(args.email ? { email: String(args.email) } : {}),
+          ...(args.address ? { address: String(args.address) } : {}),
+          ...(args.shippingAddress ? { shippingAddress: String(args.shippingAddress) } : {}),
+          ...(args.notes ? { notes: String(args.notes) } : {}),
+          ...(args.defaultShipping !== undefined ? { defaultShipping: Number(args.defaultShipping) } : {}),
+        });
       }
       const customer = await createCustomerDoc({
         name: name_,
@@ -1065,6 +1340,7 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
     }
 
     case "updateCustomer": {
+      if (ctx.previewOnly) return customerUpdatePreview(args);
       await updateCustomerDoc(String(args.customerId), {
         ...(args.name !== undefined ? { name: String(args.name) } : {}),
         ...(args.contactName !== undefined ? { contactName: String(args.contactName) } : {}),
@@ -1080,6 +1356,7 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
     }
 
     case "addCustomerAlias": {
+      if (ctx.previewOnly) return customerAliasPreview(args);
       await addCustomerAliasDoc(String(args.customerId), String(args.alias), operationId);
       return { status: "alias_added" };
     }
@@ -1095,7 +1372,13 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
       const { customer, resolvedItems, priceWarnings, aliasSuggestions } = order;
       const shipping = args.shipping !== undefined ? Number(args.shipping) : customer.defaultShipping ?? 0;
       const discount = args.discount !== undefined ? Number(args.discount) : 0;
-      if (ctx.previewOnly) return orderPreview(args, order, "draft", shipping, discount);
+      // Outside apps can save a finished (unpaid) invoice in one step, like the app's New invoice form.
+      const finalize = ctx.channel === "api" && args.finalize === true;
+      if (finalize && resolvedItems.some((it) => it.incomplete)) {
+        const missing = resolvedItems.filter((it) => it.incomplete).map((it) => it.productName);
+        return { status: "needs_more_info", message: `A finished invoice needs a quantity and a price for every item. Ask the user about: ${missing.join(", ")}.`, incompleteItems: missing };
+      }
+      if (ctx.previewOnly) return orderPreview(args, order, finalize ? "invoice" : "draft", shipping, discount);
 
       const commitStart = performance.now();
       const invoice = await createInvoice({
@@ -1106,7 +1389,7 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
         discount,
         notes: args.notes ? String(args.notes) : undefined,
         originalOrderText: args.originalOrderText ? String(args.originalOrderText) : undefined,
-        status: "draft",
+        status: finalize ? "unpaid" : "draft",
         createdBy: "ai",
         actor: "ai",
         operationId,
@@ -1228,11 +1511,7 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
     }
 
     case "convertDelivery": {
-      const target = args.invoiceId
-        ? await getInvoiceDoc(String(args.invoiceId))
-        : args.invoiceNumber
-        ? await getInvoiceByNumber(String(args.invoiceNumber))
-        : null;
+      const target = await invoiceByIdOrNumber(args);
       if (!target) return { status: "not_found", message: "Delivery order not found — give its invoiceId or invoiceNumber." };
       if (!target.delivery) return { status: "error", message: `Invoice #${target.invoiceNumber} is not a delivery order.` };
       const prices = Array.isArray(args.prices) ? (args.prices as Array<Record<string, unknown>>) : [];
@@ -1240,22 +1519,30 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
         const price = Number(p.price);
         if (!Number.isFinite(price) || price < 0) return { status: "needs_more_info", message: `Invalid price for ${p.productName ?? p.productId ?? "an item"} — ask the user.` };
       }
+      if (ctx.previewOnly) {
+        if (!isOpenDelivery(target)) return { status: "error", message: `Invoice #${target.invoiceNumber} is not an open delivery order (already converted or void).` };
+        const items = priceDeliveryLines(target, prices);
+        return invoiceEditPreview(
+          target,
+          "Set the final prices on a delivery (chốt giá); it becomes a normal unpaid invoice",
+          {
+            items,
+            ...(args.shipping !== undefined ? { shipping: Number(args.shipping) } : {}),
+            ...(args.discount !== undefined ? { discount: Number(args.discount) } : {}),
+          },
+          {
+            invoiceId: target.id,
+            // Each price pinned to the exact line it matched, so the save can't land on another line.
+            prices: prices.map((p) => ({ ...pinLine(target, { productId: p.productId as string | undefined, productName: p.productName as string | undefined }), price: Number(p.price) })),
+            ...(args.shipping !== undefined ? { shipping: Number(args.shipping) } : {}),
+            ...(args.discount !== undefined ? { discount: Number(args.discount) } : {}),
+            reason: String(args.reason ?? `Delivery #${target.invoiceNumber} converted to final invoice`),
+          }
+        );
+      }
       const { stockWarnings, ...updated } = await updateInvoiceWithLog({
         invoiceId: target.id,
-        items: (before) => {
-          const items = before.items.map((it) => ({ ...it }));
-          const priced = new Set<number>();
-          for (const p of prices) {
-            const idx = findLineIndex({ ...before, items }, { productId: p.productId as string | undefined, productName: p.productName as string | undefined });
-            if (idx < 0) throw new DomainError(`"${p.productName ?? p.productId}" is not on delivery #${before.invoiceNumber}.`);
-            items[idx].price = Number(p.price);
-            items[idx].lineTotal = Math.round(items[idx].quantity * items[idx].price * 100) / 100;
-            priced.add(idx);
-          }
-          const missing = items.filter((it, i) => it.price === 0 && !priced.has(i)).map((it) => it.productName);
-          if (missing.length) throw new DomainError(`Still no price for: ${missing.join(", ")}. Ask the user for these prices (an explicit 0 is allowed for a free item).`);
-          return items;
-        },
+        items: (before) => priceDeliveryLines(before, prices),
         shipping: args.shipping !== undefined ? Number(args.shipping) : undefined,
         discount: args.discount !== undefined ? Number(args.discount) : undefined,
         convertDelivery: true, // checked inside the transaction, so a delivery is never converted twice
@@ -1337,52 +1624,50 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
         return { status: "needs_more_info", message: `No price given and ${chosen.name} has no default price — ask the user for the price.` };
       }
 
+      const reason = String(args.reason ?? `Added ${quantity} x ${chosen.name}`);
+      if (ctx.previewOnly) {
+        return invoiceEditPreview(invoice, "Add an item to an invoice", { items: addLine(invoice.items, chosen, quantity, args.unit as string | undefined, price) }, {
+          invoiceId: invoice.id,
+          productId: chosen.id,
+          quantity,
+          ...(args.unit ? { unit: String(args.unit) } : {}),
+          price,
+          reason,
+        });
+      }
+
       // The line list is computed from the invoice as read INSIDE the transaction, so a concurrent edit is never overwritten.
       const { stockWarnings, ...updated } = await updateInvoiceWithLog({
         invoiceId: invoice.id,
-        items: (before) => {
-          const items = [...before.items];
-          const existingIdx = items.findIndex((it) => it.productId === chosen.id);
-          if (existingIdx >= 0) {
-            const merged = { ...items[existingIdx] };
-            merged.quantity += quantity;
-            merged.lineTotal = Math.round(merged.quantity * merged.price * 100) / 100;
-            items[existingIdx] = merged;
-          } else {
-            items.push({
-              productId: chosen.id,
-              productName: chosen.name,
-              quantity,
-              unit: (args.unit as string) || chosen.defaultUnit,
-              price,
-              lineTotal: Math.round(quantity * price * 100) / 100,
-              barcode: chosen.barcode,
-            });
-          }
-          return items;
-        },
+        items: (before) => addLine(before.items, chosen, quantity, args.unit as string | undefined, price),
         actor: "ai",
-        reason: String(args.reason ?? `Added ${quantity} x ${chosen.name}`),
+        reason,
         operationId,
       });
       return { status: "updated", invoice: updated, ...(stockWarnings ? { stockWarnings } : {}), ...(aliasSuggestion ? { aliasSuggestions: [aliasSuggestion] } : {}) };
     }
 
     case "updateInvoiceItem": {
+      const match: LineMatch = { productId: args.productId as string, productName: args.productName as string };
+      const lineChanges = {
+        ...(args.quantity !== undefined ? { quantity: Number(args.quantity) } : {}),
+        ...(args.price !== undefined ? { price: Number(args.price) } : {}),
+        ...(args.unit !== undefined ? { unit: String(args.unit) } : {}),
+      };
+      if (ctx.previewOnly) {
+        const invoice = await getInvoiceDoc(String(args.invoiceId));
+        if (!invoice) return { status: "not_found", message: "Invoice not found." };
+        if (Object.keys(lineChanges).length === 0) return { status: "needs_more_info", message: "Say what to change: quantity, price or unit." };
+        return invoiceEditPreview(invoice, "Change an item on an invoice", { items: updateLine(invoice, match, lineChanges) }, {
+          invoiceId: invoice.id,
+          ...pinLine(invoice, match),
+          ...lineChanges,
+          reason: String(args.reason ?? `Updated ${args.productName ?? "line item"}`),
+        });
+      }
       const { stockWarnings, ...updated } = await updateInvoiceWithLog({
         invoiceId: String(args.invoiceId),
-        items: (before) => {
-          const idx = findLineIndex(before, { productId: args.productId as string, productName: args.productName as string });
-          if (idx < 0) throw new DomainError("Could not find that line item on the invoice.");
-          const items = [...before.items];
-          const line = { ...items[idx] };
-          if (args.quantity !== undefined) line.quantity = Number(args.quantity);
-          if (args.price !== undefined) line.price = Number(args.price);
-          if (args.unit !== undefined) line.unit = String(args.unit);
-          line.lineTotal = Math.round(line.quantity * line.price * 100) / 100;
-          items[idx] = line;
-          return items;
-        },
+        items: (before) => updateLine(before, match, lineChanges),
         actor: "ai",
         reason: String(args.reason ?? `Updated ${args.productName ?? "line item"}`),
         operationId,
@@ -1391,13 +1676,19 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
     }
 
     case "removeInvoiceItem": {
+      const match: LineMatch = { productId: args.productId as string, productName: args.productName as string };
+      if (ctx.previewOnly) {
+        const invoice = await getInvoiceDoc(String(args.invoiceId));
+        if (!invoice) return { status: "not_found", message: "Invoice not found." };
+        return invoiceEditPreview(invoice, "Remove an item from an invoice", { items: removeLine(invoice, match) }, {
+          invoiceId: invoice.id,
+          ...pinLine(invoice, match),
+          reason: String(args.reason ?? `Removed ${args.productName ?? "line item"}`),
+        });
+      }
       const { stockWarnings, ...updated } = await updateInvoiceWithLog({
         invoiceId: String(args.invoiceId),
-        items: (before) => {
-          const idx = findLineIndex(before, { productId: args.productId as string, productName: args.productName as string });
-          if (idx < 0) throw new DomainError("Could not find that line item on the invoice.");
-          return before.items.filter((_, i) => i !== idx);
-        },
+        items: (before) => removeLine(before, match),
         actor: "ai",
         reason: String(args.reason ?? `Removed ${args.productName ?? "line item"}`),
         operationId,
@@ -1406,6 +1697,7 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
     }
 
     case "updateInvoice": {
+      if (ctx.previewOnly) return invoiceFieldsPreview(args);
       const { stockWarnings, ...updated } = await updateInvoiceWithLog({
         invoiceId: String(args.invoiceId),
         shipping: args.shipping !== undefined ? Number(args.shipping) : undefined,
@@ -1422,6 +1714,14 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
     }
 
     case "finalizeInvoice": {
+      if (ctx.previewOnly) {
+        const invoice = await getInvoiceDoc(String(args.invoiceId));
+        if (!invoice) return { status: "not_found", message: "Invoice not found." };
+        // Finalizing a void or paid invoice would recompute its status; only a draft is finalized.
+        if (invoice.paymentStatus !== "draft") return { status: "error", message: `Invoice #${invoice.invoiceNumber} is not a draft (it is ${invoice.paymentStatus}).` };
+        const incomplete = invoice.items.filter((it) => it.incomplete || it.quantity <= 0).map((it) => it.productName);
+        return invoiceEditPreview(invoice, "Finalize a draft invoice (it becomes unpaid and the stock is taken)", { status: "unpaid" }, { invoiceId: invoice.id }, incomplete.length ? { warning: `These lines still miss a quantity or price: ${incomplete.join(", ")}.` } : {});
+      }
       const { stockWarnings, ...updated } = await updateInvoiceWithLog({
         invoiceId: String(args.invoiceId),
         status: "unpaid",
@@ -1433,12 +1733,22 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
     }
 
     case "copyInvoice": {
-      const source = args.invoiceId
-        ? await getInvoiceDoc(String(args.invoiceId))
-        : args.invoiceNumber
-        ? await getInvoiceByNumber(String(args.invoiceNumber))
-        : null;
+      const source = await invoiceByIdOrNumber(args);
       if (!source) return { status: "not_found" };
+      if (ctx.previewOnly) {
+        return {
+          status: "preview",
+          preview: {
+            action: "Copy an invoice into a new draft (the original is not changed)",
+            from: { id: source.id, invoiceNumber: source.invoiceNumber, customerName: source.customerName },
+            items: source.items.map(lineSummary),
+            shipping: source.shipping,
+            discount: source.discount,
+            total: source.total,
+          },
+          pinnedArgs: { invoiceId: source.id },
+        };
+      }
       const invoice = await copyInvoiceDoc({ sourceInvoiceId: source.id, actor: "ai", operationId });
       return { status: "created", invoice };
     }
@@ -1447,6 +1757,32 @@ async function runTool(name: string, args: ToolArgs, ctx: ToolContext): Promise<
       const amount = Number(args.amount);
       if (!Number.isFinite(amount) || amount <= 0) {
         return { status: "needs_more_info", message: "Payment amount must be a positive number — ask the user for the amount." };
+      }
+      if (ctx.channel === "api") {
+        // Outside apps never record more than the invoice still owes, or a payment on a void invoice.
+        const invoice = await getInvoiceDoc(String(args.invoiceId));
+        if (!invoice) return { status: "not_found", message: "Invoice not found." };
+        if (invoice.paymentStatus === "void") return { status: "error", message: `Invoice #${invoice.invoiceNumber} is void.` };
+        if (amount > invoice.balance + 0.001) {
+          return { status: "error", message: `$${amount.toFixed(2)} is more than invoice #${invoice.invoiceNumber} still owes ($${invoice.balance.toFixed(2)}).` };
+        }
+        if (ctx.previewOnly) {
+          assertPositiveAmount(amount, "amount");
+          const amountPaid = r2(invoice.amountPaid + amount);
+          return {
+            status: "preview",
+            preview: {
+              action: "Record a customer payment",
+              invoice: { id: invoice.id, invoiceNumber: invoice.invoiceNumber, customerName: invoice.customerName, total: invoice.total },
+              amount,
+              method: args.method ? String(args.method) : "",
+              before: { amountPaid: invoice.amountPaid, balance: invoice.balance, status: invoice.paymentStatus },
+              after: { amountPaid, balance: r2(invoice.total - amountPaid), status: computePaymentStatus(invoice.total, amountPaid, invoice.paymentStatus === "draft" ? "unpaid" : invoice.paymentStatus) },
+              ...(invoice.paymentStatus === "draft" ? { warning: "This invoice is still a draft; paying it finalizes it and takes the stock." } : {}),
+            },
+            pinnedArgs: { invoiceId: invoice.id, amount, ...(args.method ? { method: String(args.method) } : {}), ...(args.note ? { note: String(args.note) } : {}) },
+          };
+        }
       }
       const { invoice, payment, stockWarnings } = await recordPaymentDoc({
         invoiceId: String(args.invoiceId),

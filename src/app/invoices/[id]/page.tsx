@@ -3,14 +3,16 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { getInvoice, watchInvoiceLogs, watchProducts, getPaymentsForInvoice } from "@/lib/store";
-import { updateInvoiceApi, recordPaymentApi, createProductApi, newOperationId } from "@/lib/businessApi";
+import { updateInvoiceApi, recordPaymentApi } from "@/lib/businessApi";
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Invoice, InvoiceLog, InvoiceLineItem, Product, InvoiceStatus, Payment } from "@/lib/types";
 import { isCommittedStatus, isInvoiceIncomplete, isOpenDelivery } from "@/lib/types";
 import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign, AlertTriangle, FileStack } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
+import ProductQuickAddModal from "@/components/ProductQuickAddModal";
 import DeliveryBadge from "@/components/DeliveryBadge";
+import { printPage } from "@/lib/printPage";
 
 const COMPANY_NAME = process.env.NEXT_PUBLIC_COMPANY_NAME || "Ngan";
 
@@ -42,6 +44,8 @@ export default function InvoiceDetailPage() {
 
   const [editing, setEditing] = useState(false);
   const [draftItems, setDraftItems] = useState<InvoiceLineItem[]>([]);
+  // Quick add of a product opens a confirm popup (prefilled with the typed name); nothing is saved until OK there.
+  const [quickAddProduct, setQuickAddProduct] = useState<{ idx: number; name: string } | null>(null);
   const [draftShipping, setDraftShipping] = useState("0");
   const [draftDiscount, setDraftDiscount] = useState("0");
   const [draftStatus, setDraftStatus] = useState<InvoiceStatus>("unpaid");
@@ -125,13 +129,6 @@ export default function InvoiceDetailPage() {
     setDraftItems((prev) => [...prev, { productId: "", productName: "", quantity: 1, unit: "thùng", price: 0, lineTotal: 0 }]);
   }
 
-  async function handleCreateProductForDraftLine(idx: number, name: string) {
-    const line = draftItems[idx];
-    // A one-shot quick-add (no retry affordance in this UI) — its own fresh id, independent of the edit's own.
-    const product = await createProductApi(authedFetch, { name, defaultPrice: line?.price || 0, defaultUnit: line?.unit || "thùng" }, newOperationId());
-    updateLine(idx, { productId: product.id, productName: product.name, price: product.defaultPrice, unit: product.defaultUnit });
-  }
-
   async function saveEdit() {
     if (!invoice) return;
     if (!reason.trim()) {
@@ -208,7 +205,7 @@ export default function InvoiceDetailPage() {
         </button>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <button
-            onClick={() => window.print()}
+            onClick={() => void printPage()}
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
             <Printer size={14} /> Print / PDF
@@ -373,7 +370,7 @@ export default function InvoiceDetailPage() {
                       value={line.productName}
                       onQueryChange={(q) => updateLine(idx, { productId: "", productName: q })}
                       onSelect={(p) => updateLine(idx, { productId: p.id, productName: p.name, price: p.defaultPrice, unit: p.defaultUnit })}
-                      onCreateNew={(name) => handleCreateProductForDraftLine(idx, name)}
+                      onCreateNew={(name) => setQuickAddProduct({ idx, name })}
                       placeholder="Tìm hoặc thêm sản phẩm..."
                       createLabel="Thêm sản phẩm mới"
                     />
@@ -527,7 +524,7 @@ export default function InvoiceDetailPage() {
       </div>
 
       {/* Print-only classic invoice layout — kept separate from the screen UI above. */}
-      <div className="hidden print:block text-black">
+      <div className="hidden print:block text-black" data-print-root data-print-name={`invoice-${invoice.invoiceNumber}`}>
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">INVOICE</h1>
@@ -659,6 +656,23 @@ export default function InvoiceDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {quickAddProduct && (
+        <ProductQuickAddModal
+          initialName={quickAddProduct.name}
+          initialPrice={draftItems[quickAddProduct.idx]?.price}
+          initialUnit={draftItems[quickAddProduct.idx]?.unit}
+          onCreated={(p) =>
+            updateLine(quickAddProduct.idx, {
+              productId: p.id,
+              productName: p.name,
+              price: p.defaultPrice,
+              unit: p.defaultUnit,
+            })
+          }
+          onClose={() => setQuickAddProduct(null)}
+        />
       )}
     </div>
   );
