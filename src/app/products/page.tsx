@@ -165,7 +165,7 @@ function ProductsPageContent() {
       {/* Desktop table */}
       {focusId && <ChatFilterBanner label="Đang xem sản phẩm mở từ chat" clearHref="/products" />}
 
-      {!focusId && inactiveCount > 0 && (
+      {!focusId && (
         <div className="flex justify-end">
           <button
             onClick={() => setShowInactive((v) => !v)}

@@ -1,8 +1,13 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f8fafc;
+  --background: #f4f6fb;
   --foreground: #0f172a;
+  /* Brand colours: indigo → violet, used for the main action buttons. */
+  --brand-from: #6366f1;
+  --brand-to: #7c3aed;
+  --card-shadow: 0 1px 2px rgb(15 23 42 / 0.04), 0 6px 18px -8px rgb(15 23 42 / 0.12);
+  --card-shadow-hover: 0 2px 4px rgb(15 23 42 / 0.05), 0 12px 28px -10px rgb(79 70 229 / 0.25);
 }
 
 @theme inline {
@@ -16,6 +21,91 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/*
+ * Modern look. These screen-only rules restyle the shared building blocks every page already uses (white cards,
+ * list tables, the main indigo button, form fields), so the whole app gets the new look without editing each page.
+ * They are plain (unlayered) CSS, so they sit on top of the Tailwind classes on those elements. Print is untouched.
+ */
+@media screen {
+  body {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(60rem 30rem at 100% -10%, rgb(99 102 241 / 0.08), transparent 60%),
+      radial-gradient(40rem 24rem at -10% 110%, rgb(20 184 166 / 0.06), transparent 60%);
+  }
+
+  /* Page titles: a bit bolder and tighter. */
+  main h1.text-2xl {
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  /* White cards and panels: gentle shadow, lift a little when they are tappable. */
+  main .bg-white.border.rounded-2xl,
+  main .bg-white.border.rounded-xl {
+    box-shadow: var(--card-shadow);
+  }
+  main a.bg-white.border.rounded-2xl {
+    transition: box-shadow 0.15s ease;
+  }
+  main a.bg-white.border.rounded-2xl:hover {
+    box-shadow: var(--card-shadow-hover);
+  }
+
+  /* List tables with the plain grey header (customers, products): tinted header. */
+  main thead.bg-slate-50 {
+    background-image: linear-gradient(180deg, #f5f6ff, #eef0fc);
+    color: #4c5384;
+    letter-spacing: 0.04em;
+  }
+  main thead.bg-slate-50 th {
+    border-bottom: 1px solid #e0e4f6;
+  }
+  main tbody tr.cursor-pointer {
+    transition: background-color 0.12s ease;
+  }
+
+  /* Main action buttons (New, Save, Send…): indigo → violet gradient with a soft glow. */
+  .bg-indigo-600 {
+    background-image: linear-gradient(135deg, var(--brand-from), #4f46e5 55%, var(--brand-to));
+    box-shadow: 0 6px 16px -6px rgb(79 70 229 / 0.55);
+  }
+  button.bg-indigo-600:hover:not(:disabled),
+  a.bg-indigo-600:hover {
+    background-image: linear-gradient(135deg, #4f46e5, #4338ca 55%, #6d28d9);
+  }
+  button.bg-indigo-600:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  /* Form fields: rounded focus glow in the brand colour. */
+  main input:not([type="checkbox"]):not([type="radio"]),
+  main select,
+  main textarea,
+  .fixed input:not([type="checkbox"]):not([type="radio"]),
+  .fixed select,
+  .fixed textarea {
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  main input:not([type="checkbox"]):not([type="radio"]):focus,
+  main select:focus,
+  main textarea:focus,
+  .fixed input:not([type="checkbox"]):not([type="radio"]):focus,
+  .fixed select:focus,
+  .fixed textarea:focus {
+    border-color: #818cf8;
+    outline: none;
+    box-shadow: 0 0 0 3px rgb(99 102 241 / 0.18);
+  }
+
+  /* Pop-up windows: darker, blurred backdrop so the form stands out. */
+  .fixed.inset-0.bg-black\/30 {
+    background-color: rgb(15 23 42 / 0.45);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+  }
 }
 
 /*

@@ -9,10 +9,18 @@ import { FileText, Boxes, Users, AlertTriangle } from "lucide-react";
 import MobileChatHome from "@/components/MobileChatHome";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 
-function StatCard({ label, value, icon: Icon }: { label: string; value: string; icon: typeof FileText }) {
+// Each tile has its own colour so the numbers are easy to tell apart; they match the menu (Invoices blue, Products orange, Customers green).
+const statTones = {
+  indigo: "from-indigo-500 to-violet-600 shadow-indigo-500/30",
+  sky: "from-sky-500 to-blue-600 shadow-sky-500/30",
+  amber: "from-amber-400 to-orange-500 shadow-amber-500/30",
+  emerald: "from-emerald-500 to-teal-600 shadow-emerald-500/30",
+};
+
+function StatCard({ label, value, icon: Icon, tone = "indigo" }: { label: string; value: string; icon: typeof FileText; tone?: keyof typeof statTones }) {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 flex items-center gap-4">
-      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+      <div className={`flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-md ${statTones[tone]}`}>
         <Icon size={20} />
       </div>
       <div>
@@ -55,10 +63,10 @@ function DashboardContent() {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total invoices" value={String(invoices.length)} icon={FileText} />
-        <StatCard label="Revenue (USD)" value={`$${revenue.toFixed(2)}`} icon={FileText} />
-        <StatCard label="Products" value={String(products.length)} icon={Boxes} />
-        <StatCard label="Customers" value={String(customers.length)} icon={Users} />
+        <StatCard label="Total invoices" value={String(invoices.length)} icon={FileText} tone="sky" />
+        <StatCard label="Revenue (USD)" value={`$${revenue.toFixed(2)}`} icon={FileText} tone="indigo" />
+        <StatCard label="Products" value={String(products.length)} icon={Boxes} tone="amber" />
+        <StatCard label="Customers" value={String(customers.length)} icon={Users} tone="emerald" />
       </div>
 
       {outstanding > 0 && (
