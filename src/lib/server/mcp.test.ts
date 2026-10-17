@@ -64,7 +64,8 @@ describe("MCP server", () => {
     const list = await (await mcpPost(rpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }))).json();
     const names = list.result.tools.map((t: { name: string }) => t.name);
     expect(names).toContain("getCustomerDebt");
-    expect(names).not.toContain("recordPayment");
+    expect(names).toEqual(expect.arrayContaining(["recordPayment", "createPurchase", "createVendor"]));
+    expect(names).not.toContain("requestUserInput");
     expect(list.result.tools.find((t: { name: string }) => t.name === "searchCustomer").annotations.readOnlyHint).toBe(true);
 
     const call = await (await mcpPost(rpc({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "searchCustomer", arguments: { query: "hoa" } } }))).json();
@@ -80,7 +81,7 @@ describe("MCP server", () => {
   });
 
   it("refuses unknown tools and methods", async () => {
-    const call = await (await mcpPost(rpc({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "recordPayment", arguments: { invoiceId: "x", amount: 1 } } }))).json();
+    const call = await (await mcpPost(rpc({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "deleteInvoice", arguments: { invoiceId: "x" } } }))).json();
     expect(call.error.code).toBe(-32602);
     const m = await (await mcpPost(rpc({ jsonrpc: "2.0", id: 5, method: "resources/list" }))).json();
     expect(m.error.code).toBe(-32601);
@@ -107,7 +108,7 @@ describe("REST API", () => {
     expect(saved.result.status).toBe("created");
     expect(store.count("invoices")).toBe(1);
 
-    expect((await call("recordPayment", {})).status).toBe(404);
+    expect((await call("deleteInvoice", {})).status).toBe(404);
   });
 
   it("rejects calls without a key", async () => {
