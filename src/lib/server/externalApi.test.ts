@@ -85,7 +85,7 @@ describe("what an outside AI can do", () => {
         "listVendors", "createVendor", "updateVendor", "createPurchase", "searchPurchases", "getPurchase", "recordVendorPayment",
         "updatePurchaseInfo", "cancelPurchase", "getPaymentRequest", "getCustomInvoice", "saveCustomInvoice", "listInvoices",
         "recordCustomerPayment", "adjustCustomerDebt", "changePayment",
-        "getStoreSummary", "getInvoiceHistory", "confirmAction",
+        "getStoreSummary", "getInvoiceHistory", "getProductInvoices", "confirmAction",
       ])
     );
     for (const banned of ["requestUserInput", "deleteProduct", "deleteInvoice"]) expect(names).not.toContain(banned);

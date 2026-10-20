@@ -16,7 +16,7 @@ describe("linksForToolResult", () => {
       { href: "/customers?id=c1", label: "Khách: Chị Hoa" },
     ]);
     expect(linksForToolResult("getProduct", {}, { product: { id: "p1", name: "Milo" } })).toEqual([
-      { href: "/products?id=p1", label: "Sản phẩm: Milo" },
+      { href: "/products/p1", label: "Sản phẩm: Milo" },
     ]);
   });
 

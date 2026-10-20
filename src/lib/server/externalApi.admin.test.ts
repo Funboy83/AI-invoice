@@ -179,6 +179,25 @@ describe("selling side", () => {
     expect(read(`customers/${id}`)).toMatchObject({ address: "12 Bolsa" });
   });
 
+  it("lists the invoices a product was sold on, read-only", async () => {
+    invoice("i1", {});
+    invoice("i2", { paymentStatus: "void" });
+    const before = store.count("invoices");
+    const r = (await run("getProductInvoices", { productId: "p1" })) as unknown as {
+      product: { name: string };
+      link: string;
+      sold: { invoiceCount: number };
+      invoices: { invoiceNumber: string; customerName: string; status: string; link: string }[];
+    };
+    expect(r.product.name).toBe("Milo");
+    expect(r.link).toBe("/products/p1");
+    expect(r.invoices).toHaveLength(2);
+    expect(r.invoices[0]).toMatchObject({ customerName: "Hoa Lee", link: expect.stringMatching(/^\/invoices\//) });
+    expect(r.sold.invoiceCount).toBe(1);
+    expect(store.count("invoices")).toBe(before);
+    expect(((await run("getProductInvoices", { productId: "nope" })) as R).status).toBe("not_found");
+  });
+
   it("gives the payment request statement, the invoice list by day, and saves Custom Invoice info", async () => {
     invoice("i1", {});
     invoice("i2", { paymentStatus: "paid", amountPaid: 58, balance: 0, date: Date.parse("2026-10-12T20:00:00Z") });

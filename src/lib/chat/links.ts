@@ -37,7 +37,7 @@ function productLink(v: unknown): ChatLink | null {
   const id = str(p?.id);
   if (!id) return null;
   const name = str(p?.name);
-  return { href: `/products?id=${encodeURIComponent(id)}`, label: name ? `Sản phẩm: ${name}` : "Xem sản phẩm" };
+  return { href: `/products/${encodeURIComponent(id)}`, label: name ? `Sản phẩm: ${name}` : "Xem sản phẩm" };
 }
 
 const customerInvoicesLink = (customerId: string): ChatLink => ({
