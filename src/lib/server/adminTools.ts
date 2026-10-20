@@ -507,7 +507,7 @@ async function run(name: string, args: Args, ctx: AdminToolContext): Promise<unk
         sold: totals,
         count: listed.length,
         invoices: listed.slice(0, limit).map((r) => ({ ...r, date: storeDateKey(r.date), link: `/invoices/${r.invoiceId}` })),
-        ...(listed.length > limit ? { note: `Showing ${limit} of ${listed.length}.` } : {}),
+        ...(rows.length === 0 ? { note: "Product not sold yet." } : listed.length > limit ? { note: `Showing ${limit} of ${listed.length}.` } : {}),
       };
     }
 

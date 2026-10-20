@@ -118,7 +118,9 @@ export default function ProductDetailPage() {
           value={sales ? `${sales.totals.quantity}${sales.totals.mixedUnits ? "" : ` ${product.defaultUnit}`}` : "…"}
           sub={
             sales
-              ? `${sales.totals.invoiceCount} invoice${sales.totals.invoiceCount === 1 ? "" : "s"} · $${sales.totals.amount.toFixed(2)}`
+              ? sales.rows.length === 0
+                ? "Not sold yet"
+                : `${sales.totals.invoiceCount} invoice${sales.totals.invoiceCount === 1 ? "" : "s"} · $${sales.totals.amount.toFixed(2)}`
               : "Loading"
           }
         />
@@ -179,6 +181,12 @@ function InvoiceSoldDialog({
   onClose: () => void;
 }) {
   const back = `?back=${encodeURIComponent(`/products/${product.id}`)}`;
+  // A slow phone connection can keep the first download of the invoice list going; after a while offer a reload.
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 8000);
+    return () => clearTimeout(t);
+  }, []);
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30" onClick={onClose}>
       <div
@@ -202,8 +210,17 @@ function InvoiceSoldDialog({
         </div>
 
         <div className="overflow-y-auto p-3 md:p-5">
-          {!sales && <p className="py-10 text-center text-sm text-slate-400">Loading invoices…</p>}
-          {sales && sales.rows.length === 0 && <p className="py-10 text-center text-sm text-slate-400">This product is not on any invoice yet.</p>}
+          {!sales && (
+            <div className="py-10 text-center text-sm text-slate-400 space-y-3">
+              <p>Loading invoices…</p>
+              {slow && (
+                <button onClick={() => window.location.reload()} className="rounded-lg border border-slate-300 px-3 py-1.5 font-medium text-slate-700">
+                  Taking long? Tap to reload
+                </button>
+              )}
+            </div>
+          )}
+          {sales && sales.rows.length === 0 && <p className="py-10 text-center text-sm text-slate-500">Product not sold yet.</p>}
 
           {sales && sales.rows.length > 0 && (
             <>
