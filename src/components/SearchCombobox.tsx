@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Plus, Search } from "lucide-react";
 import { findSimilar } from "@/lib/similarity";
 
@@ -9,6 +9,8 @@ interface SearchComboboxProps<T> {
   getId: (item: T) => string;
   getLabel: (item: T) => string;
   getSubLabel?: (item: T) => string;
+  /** Extra info shown at the far right of each result row (e.g. stock on hand). */
+  getRight?: (item: T) => ReactNode;
   value: string;
   onQueryChange: (query: string) => void;
   onSelect: (item: T) => void;
@@ -26,6 +28,7 @@ export default function SearchCombobox<T>({
   getId,
   getLabel,
   getSubLabel,
+  getRight,
   value,
   onQueryChange,
   onSelect,
@@ -75,7 +78,10 @@ export default function SearchCombobox<T>({
               className="flex w-full items-center justify-between gap-2 px-3 py-2.5 text-left text-sm hover:bg-slate-50"
             >
               <span className="text-slate-800">{getLabel(item)}</span>
-              {getSubLabel && <span className="text-xs text-slate-400">{getSubLabel(item)}</span>}
+              <span className="flex shrink-0 items-center gap-3">
+                {getSubLabel && <span className="text-xs text-slate-400">{getSubLabel(item)}</span>}
+                {getRight && getRight(item)}
+              </span>
             </button>
           ))}
           {results.length === 0 && <p className="px-3 py-3 text-xs text-slate-400">Không tìm thấy trong database.</p>}

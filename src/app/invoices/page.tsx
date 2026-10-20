@@ -11,6 +11,7 @@ import { useAppAuth } from "@/lib/useAppAuth";
 import { isInvoiceIncomplete, isOpenDelivery, type Invoice, type Product, type Customer, type InvoiceLineItem } from "@/lib/types";
 import { Plus, X, Trash2, AlertTriangle, Truck, CalendarDays } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
+import StockBadge from "@/components/StockBadge";
 import DeliveryBadge from "@/components/DeliveryBadge";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 import CustomerFormModal from "@/components/CustomerFormModal";
@@ -437,6 +438,7 @@ function InvoicesPageContent() {
                         getId={(p) => p.id}
                         getLabel={(p) => p.name}
                         getSubLabel={(p) => `$${p.defaultPrice.toFixed(2)}`}
+                        getRight={(p) => <StockBadge product={p} />}
                         value={line.productName}
                         onQueryChange={(q) => updateLine(idx, { productId: "", productName: q })}
                         onSelect={(p) => updateLine(idx, { productId: p.id, productName: p.name, price: p.defaultPrice })}

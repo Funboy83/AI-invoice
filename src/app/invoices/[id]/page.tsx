@@ -11,6 +11,7 @@ import type { Invoice, InvoiceLog, InvoiceLineItem, Product, InvoiceStatus, Paym
 import { isCommittedStatus, isInvoiceIncomplete, isOpenDelivery } from "@/lib/types";
 import { ArrowLeft, Pencil, Trash2, Plus, Printer, DollarSign, AlertTriangle, FileStack } from "lucide-react";
 import SearchCombobox from "@/components/SearchCombobox";
+import StockBadge from "@/components/StockBadge";
 import ProductQuickAddModal from "@/components/ProductQuickAddModal";
 import DeliveryBadge from "@/components/DeliveryBadge";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
@@ -360,6 +361,7 @@ export default function InvoiceDetailPage() {
                       getId={(p) => p.id}
                       getLabel={(p) => p.name}
                       getSubLabel={(p) => `$${p.defaultPrice.toFixed(2)}`}
+                      getRight={(p) => <StockBadge product={p} />}
                       value={line.productName}
                       onQueryChange={(q) => updateLine(idx, { productId: "", productName: q })}
                       onSelect={(p) => updateLine(idx, { productId: p.id, productName: p.name, price: p.defaultPrice, unit: p.defaultUnit })}
