@@ -15,10 +15,13 @@ import { db } from "./firebase";
  * share sheet, which has Print and Save to Files.
  */
 export async function printPage() {
+  const name = printName();
   if (isIosHomeScreenApp()) {
     const root = document.querySelector<HTMLElement>("[data-print-root]");
-    if (root) return sharePrintLayoutAsPdf(root);
+    if (root) return sharePrintLayoutAsPdf(root, name ?? "invoice");
   }
+  // Safari and Chrome name a saved PDF after the page title, so show the print name there while printing.
+  if (name) showTitleWhilePrinting(name);
 
   let paused = false;
   try {
@@ -35,6 +38,25 @@ export async function printPage() {
   }
 }
 
+function printName(): string | null {
+  return document.querySelector<HTMLElement>("[data-print-name]")?.dataset.printName || null;
+}
+
+let savedTitle: string | null = null;
+
+function showTitleWhilePrinting(name: string) {
+  if (savedTitle === null) savedTitle = document.title;
+  document.title = name;
+  window.addEventListener(
+    "afterprint",
+    () => {
+      if (savedTitle !== null) document.title = savedTitle;
+      savedTitle = null;
+    },
+    { once: true },
+  );
+}
+
 function isIosHomeScreenApp(): boolean {
   if (typeof window === "undefined") return false;
   const nav = navigator as Navigator & { standalone?: boolean };
@@ -49,7 +71,7 @@ const MARGIN = 12;
 // Lay the copy out at roughly A4's printable width so it looks like the printed page.
 const LAYOUT_WIDTH_PX = 720;
 
-async function sharePrintLayoutAsPdf(root: HTMLElement) {
+async function sharePrintLayoutAsPdf(root: HTMLElement, name: string) {
   const sheet = openSheet();
   try {
     const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import("html2canvas-pro"), import("jspdf")]);
@@ -85,8 +107,7 @@ async function sharePrintLayoutAsPdf(root: HTMLElement) {
       pdf.addImage(slice.toDataURL("image/jpeg", 0.92), "JPEG", MARGIN, MARGIN, contentW, h / pxPerMm);
     }
 
-    const name = (document.querySelector<HTMLElement>("[data-print-name]")?.dataset.printName || "invoice").replace(/[^\w.-]+/g, "_");
-    const file = new File([pdf.output("blob")], `${name}.pdf`, { type: "application/pdf" });
+    const file = new File([pdf.output("blob")], `${name.replace(/[^\w.-]+/g, "_")}.pdf`, { type: "application/pdf" });
     sheet.ready(file);
   } catch (e) {
     sheet.failed(e instanceof Error ? e.message : String(e));

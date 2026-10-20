@@ -5,9 +5,11 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ArrowLeft, Printer } from "lucide-react";
 import { watchCustomers, watchInvoicesForCustomer } from "@/lib/store";
+import { toDateKey } from "@/lib/businessApi";
 import { isOpenInvoice, isStatementInvoice, statementOwed, statementTotals } from "@/lib/customerInvoices";
 import { useAppAuth } from "@/lib/useAppAuth";
 import { printPage } from "@/lib/printPage";
+import { printFileName } from "@/lib/printFileName";
 import { money } from "@/components/customInvoice/shared";
 import StatementPrint from "@/components/StatementPrint";
 import type { Customer, Invoice } from "@/lib/types";
@@ -196,7 +198,7 @@ export default function PaymentRequestPage() {
         </div>
       </div>
 
-      <div className="hidden print:block" data-print-root data-print-name={`payment-request-${plainName(customer.name)}`}>
+      <div className="hidden print:block" data-print-root data-print-name={printFileName(customer.name, toDateKey())}>
         {statement}
       </div>
     </>
@@ -204,7 +206,6 @@ export default function PaymentRequestPage() {
 }
 
 /** "Tạp hóa Cô Lan" → "Tap hoa Co Lan", so the PDF file name keeps readable letters instead of underscores. */
-const plainName = (name: string) => name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D");
 
 /** Shows a fixed-width paper layout shrunk to fit its column, so the whole page is visible on a phone without side scrolling. */
 function FitToWidth({ width, children }: { width: number; children: ReactNode }) {

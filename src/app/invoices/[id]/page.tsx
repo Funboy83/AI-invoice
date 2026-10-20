@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { getInvoice, watchInvoiceLogs, watchProducts, getPaymentsForInvoice } from "@/lib/store";
-import { updateInvoiceApi, recordPaymentApi } from "@/lib/businessApi";
+import { updateInvoiceApi, recordPaymentApi, toDateKey } from "@/lib/businessApi";
 import { useActionId } from "@/lib/useActionId";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import type { Invoice, InvoiceLog, InvoiceLineItem, Product, InvoiceStatus, Payment } from "@/lib/types";
@@ -15,6 +15,7 @@ import ProductQuickAddModal from "@/components/ProductQuickAddModal";
 import DeliveryBadge from "@/components/DeliveryBadge";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 import { printPage } from "@/lib/printPage";
+import { printFileName } from "@/lib/printFileName";
 
 const COMPANY_NAME = process.env.NEXT_PUBLIC_COMPANY_NAME || "Ngan";
 
@@ -516,7 +517,7 @@ export default function InvoiceDetailPage() {
       </div>
 
       {/* Print-only classic invoice layout — kept separate from the screen UI above. */}
-      <div className="hidden print:block text-black" data-print-root data-print-name={`invoice-${invoice.invoiceNumber}`}>
+      <div className="hidden print:block text-black" data-print-root data-print-name={printFileName(invoice.customerName, toDateKey(invoice.date))}>
         <div className="flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">INVOICE</h1>

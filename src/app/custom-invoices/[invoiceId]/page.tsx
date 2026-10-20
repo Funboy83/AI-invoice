@@ -9,6 +9,7 @@ import { getCustomerById, getInvoice } from "@/lib/store";
 import { getInvoicePrintInfoApi, saveInvoicePrintInfoApi, toDateKey } from "@/lib/businessApi";
 import { useAppAuth, isPermissionDenied } from "@/lib/useAppAuth";
 import { printPage } from "@/lib/printPage";
+import { printFileName } from "@/lib/printFileName";
 import type { CustomInvoiceTemplate, Invoice, InvoicePrintInfo } from "@/lib/types";
 import ProfessionalPrint from "@/components/customInvoice/ProfessionalPrint";
 import SimplePrint from "@/components/customInvoice/SimplePrint";
@@ -371,7 +372,7 @@ function CustomInvoiceContent() {
         )}
       </div>
 
-      <div className="hidden print:block" data-print-root data-print-name={`invoice-${invoice.invoiceNumber}`}>
+      <div className="hidden print:block" data-print-root data-print-name={printFileName(invoice.customerName, form.date || toDateKey(invoice.date))}>
         {preview}
       </div>
     </>
