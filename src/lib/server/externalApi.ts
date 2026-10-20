@@ -294,7 +294,7 @@ async function searchAll(query: string): Promise<{ results: SearchHit[] }> {
   return {
     results: [
       ...customers.map((c) => ({ id: `customer:${c.id}`, title: `Customer: ${c.name}`, url: appLink("/customers") })),
-      ...products.map((p) => ({ id: `product:${p.id}`, title: `Product: ${p.name}`, url: appLink("/products") })),
+      ...products.map((p) => ({ id: `product:${p.id}`, title: `Product: ${p.name}`, url: appLink(`/products/${p.id}`) })),
       ...invoices.map((i) => ({ id: `invoice:${i.id}`, title: `Invoice #${i.invoiceNumber} – ${i.customerName}`, url: appLink(`/invoices/${i.id}`) })),
       ...vendors.map((v) => ({ id: `vendor:${v.id}`, title: `Vendor: ${v.name}`, url: appLink(`/vendors/${v.id}`) })),
       ...purchases.map((p) => ({ id: `purchase:${p.id}`, title: `Purchase ${p.purchaseNumber} – ${p.vendorName}${p.vendorInvoiceNumber ? ` (#${p.vendorInvoiceNumber})` : ""}`, url: appLink(`/purchases/${p.id}`) })),
@@ -320,8 +320,9 @@ async function fetchOne(id: string): Promise<unknown> {
   } else if (kind === "product") {
     data = await read("getProduct", { productId: key });
     if (!data.product) return { status: "not_found" };
+    data = { ...data, sold: await runAdminTool("getProductInvoices", { productId: key }) };
     title = `Product: ${(data.product as { name: string }).name}`;
-    url = appLink("/products");
+    url = appLink(`/products/${key}`);
   } else if (kind === "invoice") {
     data = await read("getInvoice", { invoiceId: key });
     if (!data.invoice) return { status: "not_found" };

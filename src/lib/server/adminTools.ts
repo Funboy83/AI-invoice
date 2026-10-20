@@ -10,6 +10,7 @@ import {
   getAllInvoices,
   getAllProducts,
   getCustomerById,
+  getProductById,
   getCustomInvoiceDefaults,
   getInvoice,
   getInvoiceByNumber,
@@ -38,6 +39,7 @@ import {
   voidPurchase,
 } from "./purchaseStore";
 import { requirePrintInfo } from "./businessValidation";
+import { productSales } from "@/lib/productSales";
 
 /**
  * Tools the OUTSIDE AI apps (API / MCP, see externalApi.ts) need on top of the chat's tools (src/lib/ai/tools.ts) so
@@ -93,6 +95,21 @@ export const adminToolDefinitions: AdminToolDefinition[] = [
         deliveryOnly: { type: "boolean", description: "Only delivery orders still waiting for their final prices." },
         limit: { type: "number", description: "Max invoices to list (default 50). Totals always cover every match." },
       },
+    },
+    readOnly: true,
+  },
+  {
+    name: "getProductInvoices",
+    description:
+      "A product's page in the app: its details (name, aliases, stock, price, cost) and 'Invoice sold' — every invoice the product is on, newest first, with invoice number, date, customer, quantity, amount and status. Totals count finished invoices only (draft and void are listed but not counted). Find the product with searchProduct first.",
+    input_schema: {
+      type: "object",
+      properties: {
+        productId: str,
+        status: { type: "string", enum: ["draft", "unpaid", "partial", "paid", "void", "open"], description: "Only list invoices with this status ('open' = unpaid + partial). Totals still cover every finished invoice." },
+        limit: { type: "number", description: "Max invoices to list (default 50)." },
+      },
+      required: ["productId"],
     },
     readOnly: true,
   },
@@ -474,6 +491,23 @@ async function run(name: string, args: Args, ctx: AdminToolContext): Promise<unk
         totalBalance: r2(counted.reduce((s, i) => s + i.balance, 0)),
         invoices: matches.slice(0, limit).map(invoiceSummary),
         ...(matches.length > limit ? { note: `Showing ${limit} of ${matches.length}; the totals cover all of them.` } : {}),
+      };
+    }
+
+    case "getProductInvoices": {
+      const [product, invoices] = await Promise.all([getProductById(String(args.productId)), getAllInvoices()]);
+      if (!product) throw new NotFoundError("Product not found.");
+      const { rows, totals } = productSales(invoices, product);
+      const status = args.status ? String(args.status) : undefined;
+      const listed = rows.filter((r) => !status || (status === "open" ? r.status === "unpaid" || r.status === "partial" : r.status === status));
+      const limit = args.limit ? Math.max(1, Number(args.limit)) : 50;
+      return {
+        product,
+        link: `/products/${product.id}`,
+        sold: totals,
+        count: listed.length,
+        invoices: listed.slice(0, limit).map((r) => ({ ...r, date: storeDateKey(r.date), link: `/invoices/${r.invoiceId}` })),
+        ...(listed.length > limit ? { note: `Showing ${limit} of ${listed.length}.` } : {}),
       };
     }
 

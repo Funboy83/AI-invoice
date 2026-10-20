@@ -2,45 +2,12 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { watchProducts } from "@/lib/store";
-import { createProductApi, updateProductApi } from "@/lib/businessApi";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import ChatFilterBanner from "@/components/ChatFilterBanner";
-import { useActionId } from "@/lib/useActionId";
+import ProductFormModal from "@/components/ProductFormModal";
 import { useAppAuth } from "@/lib/useAppAuth";
 import type { Product } from "@/lib/types";
-import { Plus, Pencil, X } from "lucide-react";
-
-interface FormState {
-  id?: string;
-  name: string;
-  aliases: string;
-  defaultUnit: string;
-  defaultPrice: string;
-  cost: string;
-  /** Blank = stock untracked for this product; invoicing never reads/adjusts it. */
-  quantity: string;
-  /** Stock when the edit form opened: saving sends quantity only if the person changed it, so a sale made
-   *  while the form was open is never overwritten with the older number. */
-  startQuantity: string;
-  category: string;
-  barcode: string;
-  notes: string;
-  active: boolean;
-}
-
-const emptyForm: FormState = {
-  name: "",
-  aliases: "",
-  defaultUnit: "thùng",
-  defaultPrice: "",
-  cost: "",
-  quantity: "",
-  startQuantity: "",
-  category: "",
-  barcode: "",
-  notes: "",
-  active: true,
-};
+import { Plus, Pencil, ChevronRight } from "lucide-react";
 
 // useSearchParams (filters opened from a chat shortcut) needs a Suspense boundary to build.
 export default function ProductsPage() {
@@ -52,7 +19,7 @@ export default function ProductsPage() {
 }
 
 function ProductsPageContent() {
-  const { authedFetch, reportListenerError } = useAppAuth();
+  const { reportListenerError } = useAppAuth();
   const [allProducts, setProducts] = useState<Product[]>([]);
   // Opened from a chat shortcut (/products?id=…): show just that product.
   const focusId = useSearchParams().get("id");
@@ -67,90 +34,13 @@ function ProductsPageContent() {
   const emptyMessage =
     !showInactive && inactiveCount > 0 ? "No active products. Tap \"Show inactive\" to see hidden ones." : null;
 
-  const [modalOpen, setModalOpen] = useState(false);
-  const [form, setForm] = useState<FormState>(emptyForm);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const saveAction = useActionId(); // one stable id per open of the modal, reused across retries of THIS save
+  // null = closed; "new" = Add product; a product = editing it (the same form the product page's Edit opens).
+  const [editing, setEditing] = useState<Product | "new" | null>(null);
+  const router = useRouter();
 
   useEffect(() => watchProducts(setProducts, reportListenerError), [reportListenerError]);
 
-  function openCreate() {
-    setForm(emptyForm);
-    setError("");
-    saveAction.start();
-    setModalOpen(true);
-  }
-
-  function openEdit(p: Product) {
-    setForm({
-      id: p.id,
-      name: p.name,
-      aliases: p.aliases.join(", "),
-      defaultUnit: p.defaultUnit,
-      defaultPrice: String(p.defaultPrice),
-      cost: p.cost !== undefined ? String(p.cost) : "",
-      quantity: p.quantity !== undefined ? String(p.quantity) : "",
-      startQuantity: p.quantity !== undefined ? String(p.quantity) : "",
-      category: p.category ?? "",
-      barcode: p.barcode ?? "",
-      notes: p.notes ?? "",
-      active: p.active,
-    });
-    setError("");
-    saveAction.start();
-    setModalOpen(true);
-  }
-
-  async function handleSave() {
-    if (!form.name || form.defaultPrice === "") return;
-    setSaving(true);
-    setError("");
-    const aliases = form.aliases
-      .split(",")
-      .map((a) => a.trim())
-      .filter(Boolean);
-    try {
-      if (form.id) {
-        await updateProductApi(
-          authedFetch,
-          form.id,
-          {
-            name: form.name,
-            defaultUnit: form.defaultUnit,
-            defaultPrice: Number(form.defaultPrice),
-            cost: form.cost ? Number(form.cost) : undefined,
-            quantity: form.quantity !== "" && form.quantity !== form.startQuantity ? Number(form.quantity) : undefined,
-            category: form.category,
-            notes: form.notes,
-            active: form.active,
-          },
-          saveAction.current()
-        );
-      } else {
-        await createProductApi(
-          authedFetch,
-          {
-            name: form.name,
-            aliases,
-            defaultUnit: form.defaultUnit,
-            defaultPrice: Number(form.defaultPrice),
-            cost: form.cost ? Number(form.cost) : undefined,
-            quantity: form.quantity !== "" ? Number(form.quantity) : undefined,
-            category: form.category,
-            barcode: form.barcode,
-            notes: form.notes,
-          },
-          saveAction.current()
-        );
-      }
-      setModalOpen(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save product.");
-    } finally {
-      setSaving(false);
-    }
-  }
+  const openProduct = (p: Product) => router.push(`/products/${p.id}`);
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6 pb-24 md:pb-8">
@@ -160,7 +50,7 @@ function ProductsPageContent() {
           <p className="text-sm text-slate-500 mt-1">Catalog with aliases so the AI recognizes nicknames &amp; typos.</p>
         </div>
         <button
-          onClick={openCreate}
+          onClick={() => setEditing("new")}
           className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
         >
           <Plus size={16} /> Add product
@@ -200,7 +90,7 @@ function ProductsPageContent() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {products.map((p) => (
-              <tr key={p.id} className={`hover:bg-slate-50 ${p.active ? "" : "opacity-60"}`}>
+              <tr key={p.id} onClick={() => openProduct(p)} className={`cursor-pointer hover:bg-slate-50 ${p.active ? "" : "opacity-60"}`}>
                 <td className="px-5 py-3 font-medium text-slate-900">
                   {p.name}
                   {!p.active && <InactiveBadge />}
@@ -222,7 +112,14 @@ function ProductsPageContent() {
                 </td>
                 <td className="px-5 py-3 text-slate-500">{p.category || "—"}</td>
                 <td className="px-5 py-3 text-right">
-                  <button onClick={() => openEdit(p)} className="text-slate-400 hover:text-indigo-600">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation(); // the pencil edits right here; the rest of the row opens the product page
+                      setEditing(p);
+                    }}
+                    title="Edit"
+                    className="text-slate-400 hover:text-indigo-600"
+                  >
                     <Pencil size={15} />
                   </button>
                 </td>
@@ -244,7 +141,7 @@ function ProductsPageContent() {
         {products.map((p) => (
           <button
             key={p.id}
-            onClick={() => openEdit(p)}
+            onClick={() => openProduct(p)}
             className={`w-full text-left rounded-2xl border border-slate-200 bg-white p-4 active:bg-slate-50 ${p.active ? "" : "opacity-60"}`}
           >
             <div className="flex items-center justify-between">
@@ -252,7 +149,10 @@ function ProductsPageContent() {
                 {p.name}
                 {!p.active && <InactiveBadge />}
               </p>
-              <p className="font-semibold text-slate-900">${p.defaultPrice.toFixed(2)}</p>
+              <p className="flex items-center gap-1 font-semibold text-slate-900">
+                ${p.defaultPrice.toFixed(2)}
+                <ChevronRight size={16} className="text-slate-400" />
+              </p>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
               {p.defaultUnit}
@@ -279,135 +179,7 @@ function ProductsPageContent() {
         )}
       </div>
 
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30">
-          <div className="w-full md:max-w-md rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl max-h-[92vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">{form.id ? "Edit product" : "Add product"}</h2>
-              <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-700">
-                <X size={18} />
-              </button>
-            </div>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-medium text-slate-600">Name</label>
-                <input
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-600">Aliases (comma-separated, e.g. bo huc, BH, red bull thai)</label>
-                <input
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  value={form.aliases}
-                  onChange={(e) => setForm({ ...form, aliases: e.target.value })}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Price</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={form.defaultPrice}
-                    onChange={(e) => setForm({ ...form, defaultPrice: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Unit</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={form.defaultUnit}
-                    onChange={(e) => setForm({ ...form, defaultUnit: e.target.value })}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Cost (optional)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={form.cost}
-                    onChange={(e) => setForm({ ...form, cost: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Category (optional)</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={form.category}
-                    onChange={(e) => setForm({ ...form, category: e.target.value })}
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs font-medium text-slate-600">Stock quantity (leave blank to not track stock)</label>
-                <input
-                  type="number"
-                  step="1"
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  value={form.quantity}
-                  onChange={(e) => setForm({ ...form, quantity: e.target.value })}
-                  placeholder="Untracked"
-                />
-                <p className="mt-1 text-[11px] text-slate-400">
-                  When set, stock is automatically deducted when this product is on a finalized invoice, and restored if the invoice is voided or the line is removed.
-                </p>
-              </div>
-              {!form.id && (
-                <div>
-                  <label className="text-xs font-medium text-slate-600">Barcode (optional)</label>
-                  <input
-                    className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    value={form.barcode}
-                    onChange={(e) => setForm({ ...form, barcode: e.target.value })}
-                  />
-                </div>
-              )}
-              <div>
-                <label className="text-xs font-medium text-slate-600">Notes (optional)</label>
-                <textarea
-                  className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  rows={2}
-                  value={form.notes}
-                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                />
-              </div>
-              {form.id && (
-                <label className="flex items-center gap-2 text-sm text-slate-600">
-                  <input
-                    type="checkbox"
-                    checked={form.active}
-                    onChange={(e) => setForm({ ...form, active: e.target.checked })}
-                  />
-                  Active
-                </label>
-              )}
-              {error && <p className="text-sm text-red-600">{error}</p>}
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                onClick={() => setModalOpen(false)}
-                className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {editing && <ProductFormModal product={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} />}
     </div>
   );
 }
