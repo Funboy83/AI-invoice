@@ -9,6 +9,7 @@ import { createPurchaseApi, getVendorsApi, money } from "@/lib/purchaseApi";
 import { useAppAuth } from "@/lib/useAppAuth";
 import SearchCombobox from "@/components/SearchCombobox";
 import VendorFormModal from "@/components/VendorFormModal";
+import ProductQuickAddModal from "@/components/ProductQuickAddModal";
 import type { Product, Vendor } from "@/lib/types";
 import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import { useT } from "@/lib/useLang";
@@ -46,6 +47,7 @@ function NewPurchaseForm() {
   const [vendorId, setVendorId] = useState("");
   const [vendorQuery, setVendorQuery] = useState("");
   const [newVendorName, setNewVendorName] = useState<string | null>(null);
+  const [newProduct, setNewProduct] = useState<{ key: string; name: string } | null>(null);
   const [vendorInvoiceNumber, setVendorInvoiceNumber] = useState("");
   const [dateKey, setDateKey] = useState(() => toDateKey());
   const [lines, setLines] = useState<Line[]>(() => [blankLine()]);
@@ -175,7 +177,7 @@ function NewPurchaseForm() {
             <Plus size={15} /> {t("Add line")}
           </button>
         </div>
-        <p className="text-xs text-slate-500">{t("Not in the list? Add it on the Products page first.")}</p>
+        <p className="text-xs text-slate-500">{t("Not in the list? Type the name and tap \"Add new product\".")}</p>
         {lines.map((l, i) => {
           const p = productById.get(l.productId);
           const qty = Number(l.quantity) || 0;
@@ -191,7 +193,9 @@ function NewPurchaseForm() {
                     value={l.query}
                     onQueryChange={(q) => updateLine(l.key, { query: q, productId: "" })}
                     onSelect={(x) => updateLine(l.key, { productId: x.id, query: x.name, unit: x.defaultUnit, cost: l.cost || (x.cost !== undefined && x.cost !== null ? String(x.cost) : "") })}
+                    onCreateNew={(name) => setNewProduct({ key: l.key, name })}
                     placeholder={t("Product {n}", { n: i + 1 })}
+                    createLabel={t("Add new product")}
                   />
                 </div>
                 {lines.length > 1 && (
@@ -280,6 +284,30 @@ function NewPurchaseForm() {
           {saving ? t("Saving…") : t("Save purchase")}
         </button>
       </div>
+
+      {newProduct && (
+        <ProductQuickAddModal
+          initialName={newProduct.name}
+          initialUnit={lines.find((l) => l.key === newProduct.key)?.unit || undefined}
+          initialCost={(() => {
+            const c = lines.find((l) => l.key === newProduct.key)?.cost;
+            return c && Number(c) >= 0 ? Number(c) : undefined;
+          })()}
+          stockFromPurchase
+          onClose={() => setNewProduct(null)}
+          onCreated={(x) => {
+            // Show it right away; the live product list catches up on its own.
+            setProducts((ps) => (ps.some((p) => p.id === x.id) ? ps : [...ps, x]));
+            setLines((ls) =>
+              ls.map((l) =>
+                l.key === newProduct.key
+                  ? { ...l, productId: x.id, query: x.name, unit: x.defaultUnit, cost: l.cost || (x.cost !== undefined && x.cost !== null ? String(x.cost) : "") }
+                  : l
+              )
+            );
+          }}
+        />
+      )}
 
       {newVendorName !== null && (
         <VendorFormModal

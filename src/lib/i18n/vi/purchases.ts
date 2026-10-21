@@ -59,7 +59,7 @@ export const purchases: Record<string, string> = {
   "e.g. INV-55821": "vd: INV-55821",
   "Products bought": "Sản phẩm đã mua",
   "Add line": "Thêm dòng",
-  "Not in the list? Add it on the Products page first.": "Không có trong danh sách? Thêm ở trang Sản phẩm trước.",
+  'Not in the list? Type the name and tap "Add new product".': 'Không có trong danh sách? Gõ tên rồi bấm "Thêm sản phẩm mới".',
   "cost {amount}": "giá nhập {amount}",
   "Product {n}": "Sản phẩm {n}",
   "Remove line": "Xóa dòng",

@@ -61,4 +61,8 @@ export const productForms: Record<string, string> = {
   "Stock (blank = not tracked)": "Tồn kho (trống = không theo dõi)",
   "Not found in the database.": "Không tìm thấy trong dữ liệu.",
   "Add new": "Thêm mới",
+  "Search name, nickname or category": "Tìm tên, tên gọi khác hoặc nhóm hàng",
+  'No active products match. Tap "Show inactive" to see hidden ones.': 'Không có sản phẩm đang bán phù hợp. Bấm "Hiện ngừng bán" để xem các sản phẩm bị ẩn.',
+  "No products match.": "Không có sản phẩm phù hợp.",
+  "Stock starts at the quantity you buy on this purchase.": "Tồn kho bắt đầu bằng số lượng bạn mua trong phiếu nhập này.",
 };

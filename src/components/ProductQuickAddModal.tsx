@@ -20,12 +20,17 @@ export default function ProductQuickAddModal({
   initialName,
   initialPrice,
   initialUnit,
+  initialCost,
+  stockFromPurchase,
   onCreated,
   onClose,
 }: {
   initialName: string;
   initialPrice?: number;
   initialUnit?: string;
+  initialCost?: number;
+  /** From a purchase line: no Stock box; the product is saved not counted and the purchase's quantity becomes its stock. */
+  stockFromPurchase?: boolean;
   onCreated: (product: Product) => void;
   onClose: () => void;
 }) {
@@ -35,7 +40,7 @@ export default function ProductQuickAddModal({
   const [aliases, setAliases] = useState("");
   const [defaultUnit, setDefaultUnit] = useState(initialUnit || "thùng");
   const [defaultPrice, setDefaultPrice] = useState(initialPrice ? String(initialPrice) : "");
-  const [cost, setCost] = useState("");
+  const [cost, setCost] = useState(initialCost !== undefined ? String(initialCost) : "");
   const [quantity, setQuantity] = useState("");
   const [category, setCategory] = useState("");
   const [notes, setNotes] = useState("");
@@ -62,7 +67,7 @@ export default function ProductQuickAddModal({
           defaultUnit: defaultUnit.trim() || "thùng",
           defaultPrice: Number(defaultPrice),
           cost: cost !== "" ? Number(cost) : undefined,
-          quantity: quantity !== "" ? Number(quantity) : undefined,
+          quantity: !stockFromPurchase && quantity !== "" ? Number(quantity) : undefined,
           category: category.trim(),
           notes: notes.trim(),
         },
@@ -125,17 +130,20 @@ export default function ProductQuickAddModal({
                 onChange={(e) => setCost(e.target.value)}
               />
             </div>
-            <div>
-              <label className="text-xs font-medium text-slate-600">{t("Stock (blank = not tracked)")}</label>
-              <input
-                type="number"
-                inputMode="numeric"
-                className={inputClass}
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
-              />
-            </div>
+            {!stockFromPurchase && (
+              <div>
+                <label className="text-xs font-medium text-slate-600">{t("Stock (blank = not tracked)")}</label>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  className={inputClass}
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                />
+              </div>
+            )}
           </div>
+          {stockFromPurchase && <p className="text-xs text-slate-500">{t("Stock starts at the quantity you buy on this purchase.")}</p>}
           <div>
             <label className="text-xs font-medium text-slate-600">{t("Category (optional)")}</label>
             <input className={inputClass} value={category} onChange={(e) => setCategory(e.target.value)} />
