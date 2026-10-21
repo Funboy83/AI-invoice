@@ -7,10 +7,13 @@ import clsx from "clsx";
 import { CHAT_WELCOME, actionSummary, followUpsFor, useAiChat, type ThreadItem } from "@/lib/useAiChat";
 import ChatMarkdown from "./ChatMarkdown";
 import { splitSuggestions } from "@/lib/chat/markdown";
+import { useLang } from "@/lib/useLang";
+import { translateChatLink } from "@/lib/chat/linkLabels";
 
 /** Small status line under one of her messages: sending → accepted → running → (waiting / failed). */
 function StatusLine({ item, mobile }: { item: ThreadItem; mobile: boolean }) {
   const { resend, dismissPending } = useAiChat();
+  const { t } = useLang();
   const size = mobile ? "text-xs" : "text-[11px]";
 
   if (item.sendError && item.requestId) {
@@ -18,17 +21,17 @@ function StatusLine({ item, mobile }: { item: ThreadItem; mobile: boolean }) {
       <div className={clsx("mt-1 flex flex-col items-end gap-1", size)}>
         <span className="flex items-start gap-1 text-red-600 text-right">
           <AlertCircle size={12} className="mt-0.5 shrink-0" />
-          {item.sendError}
+          {t(item.sendError)}
         </span>
         <span className="flex gap-3">
           {/* Same requestId is reused, so resending can never create a second copy of the request. */}
           {item.canResend && (
             <button onClick={() => resend(item.requestId!)} className="font-medium text-indigo-600 py-1">
-              Gửi lại
+              {t("Resend")}
             </button>
           )}
           <button onClick={() => dismissPending(item.requestId!)} className="text-slate-500 py-1">
-            Xóa
+            {t("Remove")}
           </button>
         </span>
       </div>
@@ -37,14 +40,14 @@ function StatusLine({ item, mobile }: { item: ThreadItem; mobile: boolean }) {
   if (item.status === "sending") {
     return (
       <p className={clsx("mt-1 flex items-center justify-end gap-1 text-slate-500", size)}>
-        <Loader2 size={12} className="animate-spin" /> Đang gửi…
+        <Loader2 size={12} className="animate-spin" /> {t("Sending…")}
       </p>
     );
   }
   if (item.status === "accepted") {
     return (
       <p className={clsx("mt-1 flex items-center justify-end gap-1 text-slate-500", size)}>
-        <CheckCheck size={12} /> Đã nhận — đang chờ xử lý
+        <CheckCheck size={12} /> {t("Received — waiting to start")}
       </p>
     );
   }
@@ -53,14 +56,14 @@ function StatusLine({ item, mobile }: { item: ThreadItem; mobile: boolean }) {
     return (
       <div className={clsx("mt-1 text-right text-slate-500", size)}>
         <p className="flex items-center justify-end gap-1">
-          <Loader2 size={12} className="animate-spin" /> Đang xử lý{done > 0 ? ` · đã xong ${done} bước` : "…"}
+          <Loader2 size={12} className="animate-spin" /> {done > 0 ? t("Working · {done} steps done", { done }) : t("Working…")}
         </p>
-        <p className="text-slate-400">Bạn có thể thoát app — việc vẫn được tiếp tục.</p>
+        <p className="text-slate-400">{t("You can leave the app — the work keeps going.")}</p>
       </div>
     );
   }
   if (item.status === "failed") {
-    return <p className={clsx("mt-1 text-right text-red-600", size)}>Chưa hoàn thành</p>;
+    return <p className={clsx("mt-1 text-right text-red-600", size)}>{t("Not finished")}</p>;
   }
   return null;
 }
@@ -69,6 +72,7 @@ function StatusLine({ item, mobile }: { item: ThreadItem; mobile: boolean }) {
 export default function ChatThread({ variant, scrollKey, children }: { variant: "desktop" | "mobile"; scrollKey?: unknown; children?: ReactNode }) {
   const { thread, retryJob, online, loadError, notice, send, setInput, busy } = useAiChat();
   const mobile = variant === "mobile";
+  const { t, lang } = useLang();
   const scrollRef = useRef<HTMLDivElement>(null);
   const last = thread[thread.length - 1];
   // "Xem tiếp" buttons only under the newest finished answer, and only when nothing else is running: the AI's own
@@ -76,7 +80,7 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
   const showFollowUps = last && last.role === "assistant" && !last.awaitingAnswer && last.kind !== "error" && !busy;
   const aiSuggestions = showFollowUps ? splitSuggestions(last.content).suggestions : [];
   const followUps =
-    aiSuggestions.length > 0 ? aiSuggestions.map((q) => ({ label: q, text: q, send: true })) : showFollowUps ? followUpsFor(last.actions) : [];
+    aiSuggestions.length > 0 ? aiSuggestions.map((q) => ({ label: q, text: q, send: true })) : showFollowUps ? followUpsFor(last.actions).map((f) => ({ ...f, label: t(f.label), text: t(f.text) })) : [];
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -86,11 +90,11 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
     <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
       {!online && (
         <p className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          <WifiOff size={14} /> Đang mất kết nối — việc đang chạy vẫn tiếp tục, app sẽ tự cập nhật khi có mạng.
+          <WifiOff size={14} /> {t("Offline — work already running keeps going, and the app updates itself when you are back online.")}
         </p>
       )}
-      {loadError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{loadError}</p>}
-      {notice && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{notice}</p>}
+      {loadError && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{t(loadError)}</p>}
+      {notice && <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">{t(notice)}</p>}
 
       {thread.length === 0 && !loadError && (
         <div className="flex justify-start">
@@ -100,7 +104,7 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
               mobile ? "px-4 py-3 text-[15px]" : "px-3.5 py-2.5 text-sm"
             )}
           >
-            {CHAT_WELCOME}
+            {t(CHAT_WELCOME)}
           </div>
         </div>
       )}
@@ -122,7 +126,7 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
           >
             {m.awaitingAnswer && (
               <p className="mb-1 flex items-center gap-1 text-xs font-semibold text-amber-700">
-                <HelpCircle size={13} /> Cần bạn trả lời để tiếp tục
+                <HelpCircle size={13} /> {t("Needs your answer to continue")}
               </p>
             )}
             {m.role === "assistant" ? <ChatMarkdown content={splitSuggestions(m.content).body} mobile={mobile} /> : m.content}
@@ -142,7 +146,7 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
                     {c}
                   </button>
                 ))}
-                <p className={clsx("text-slate-500", mobile ? "text-xs" : "text-[11px]")}>Hoặc gõ câu trả lời khác bên dưới.</p>
+                <p className={clsx("text-slate-500", mobile ? "text-xs" : "text-[11px]")}>{t("Or type a different answer below.")}</p>
               </div>
             )}
             {m.links && m.links.length > 0 && (
@@ -156,7 +160,7 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
                       mobile ? "px-3 py-1.5 text-sm" : "px-2.5 py-1 text-xs"
                     )}
                   >
-                    {l.label} <ArrowUpRight size={mobile ? 14 : 12} />
+                    {translateChatLink(l.label, lang)} <ArrowUpRight size={mobile ? 14 : 12} />
                   </Link>
                 ))}
               </div>
@@ -165,7 +169,7 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {m.actions.map((a, idx) => (
                   <span key={idx} className="rounded-full bg-white/70 border border-slate-300 px-2 py-0.5 text-[10px] font-medium text-slate-600">
-                    {actionSummary(a.tool, a.result)}
+                    {actionSummary(a.tool, a.result, t)}
                   </span>
                 ))}
               </div>
@@ -175,7 +179,7 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
                 onClick={() => retryJob(m.retryJobId!)}
                 className="mt-3 flex items-center gap-1.5 rounded-full bg-red-600 px-4 py-2 text-sm font-medium text-white active:bg-red-700"
               >
-                <RotateCcw size={14} /> Thử lại
+                <RotateCcw size={14} /> {t("Try again")}
               </button>
             )}
           </div>
@@ -185,7 +189,7 @@ export default function ChatThread({ variant, scrollKey, children }: { variant: 
 
       {followUps.length > 0 && (
         <div className="flex flex-col items-start gap-2">
-          <p className={clsx("text-slate-500", mobile ? "text-sm" : "text-xs")}>Xem tiếp:</p>
+          <p className={clsx("text-slate-500", mobile ? "text-sm" : "text-xs")}>{t("Next:")}</p>
           {followUps.map((f) => (
             <button
               key={f.label}

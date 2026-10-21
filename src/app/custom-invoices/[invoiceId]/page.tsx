@@ -14,6 +14,7 @@ import type { CustomInvoiceTemplate, Invoice, InvoicePrintInfo } from "@/lib/typ
 import ProfessionalPrint from "@/components/customInvoice/ProfessionalPrint";
 import SimplePrint from "@/components/customInvoice/SimplePrint";
 import { money } from "@/components/customInvoice/shared";
+import { useT } from "@/lib/useLang";
 
 type FormInfo = Omit<InvoicePrintInfo, "updatedAt">;
 
@@ -28,20 +29,23 @@ const TEMPLATES: { id: CustomInvoiceTemplate; label: string; hint: string }[] = 
 
 const inputCls = "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base";
 
+// Field and Card labels below are English keys, translated here.
 function Field({ label, children }: { label: string; children: ReactNode }) {
+  const t = useT();
   return (
     <label className="block">
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{t(label)}</span>
       {children}
     </label>
   );
 }
 
 function Card({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
+  const t = useT();
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
       <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-        {icon} {title}
+        {icon} {t(title)}
       </h2>
       {children}
     </section>
@@ -69,6 +73,7 @@ function CustomInvoiceContent() {
   const autoPrint = useRef(searchParams.get("print") === "1");
   const beforeEdit = useRef<FormInfo | null>(null);
   const { authedFetch, notifyPossibleRevocation } = useAppAuth();
+  const t = useT();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [form, setForm] = useState<FormInfo | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -130,14 +135,14 @@ function CustomInvoiceContent() {
     setTimeout(() => void printPage(), 50);
   }, [invoice, form, invoiceId, router]);
 
-  if (loadError) return <div className="p-8 text-slate-400 text-sm">{loadError}</div>;
-  if (!invoice || !form) return <div className="p-8 text-slate-400 text-sm">Loading…</div>;
+  if (loadError) return <div className="p-8 text-slate-400 text-sm">{t(loadError)}</div>;
+  if (!invoice || !form) return <div className="p-8 text-slate-400 text-sm">{t("Loading…")}</div>;
 
   const set = (changes: Partial<FormInfo>) => setForm((f) => (f ? { ...f, ...changes } : f));
 
   async function save(thenPrint: boolean) {
     if (!form) return;
-    if (!form.date) return setError("Pick the invoice date.");
+    if (!form.date) return setError(t("Pick the invoice date."));
     setSaving(true);
     setError("");
     try {
@@ -146,7 +151,7 @@ function CustomInvoiceContent() {
       setEditing(false);
       if (thenPrint) void printPage();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save.");
+      setError(e instanceof Error ? t(e.message) : t("Failed to save."));
     } finally {
       setSaving(false);
     }
@@ -159,7 +164,7 @@ function CustomInvoiceContent() {
       <div className="p-4 md:p-8 max-w-5xl mx-auto space-y-5 pb-28 md:pb-8 print:hidden">
         <div className="flex items-center justify-between gap-3">
           <button onClick={() => router.push("/custom-invoices")} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800">
-            <ArrowLeft size={15} /> Back
+            <ArrowLeft size={15} /> {t("Back")}
           </button>
           {editing ? (
             <div className="flex items-center gap-2">
@@ -171,21 +176,21 @@ function CustomInvoiceContent() {
                 }}
                 className="rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-100"
               >
-                Cancel
+                {t("Cancel")}
               </button>
               <button
                 onClick={() => save(false)}
                 disabled={saving}
                 className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
-                <Save size={15} /> Save
+                <Save size={15} /> {t("Save")}
               </button>
               <button
                 onClick={() => save(true)}
                 disabled={saving}
                 className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                <Printer size={15} /> {saving ? "Saving…" : "Save & Print"}
+                <Printer size={15} /> {saving ? t("Saving…") : t("Save & Print")}
               </button>
             </div>
           ) : (
@@ -197,43 +202,43 @@ function CustomInvoiceContent() {
                 }}
                 className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
               >
-                <Pencil size={15} /> Edit
+                <Pencil size={15} /> {t("Edit")}
               </button>
               <button
                 onClick={() => void printPage()}
                 className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
               >
-                <Printer size={15} /> Print
+                <Printer size={15} /> {t("Print")}
               </button>
             </div>
           )}
         </div>
 
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Custom Invoice #{invoice.invoiceNumber}</h1>
+          <h1 className="text-2xl font-semibold text-slate-900">{t("Custom Invoice #{n}", { n: invoice.invoiceNumber })}</h1>
           <p className="text-sm text-slate-500 mt-1">
             {invoice.customerName} ·{" "}
             <Link href={`/invoices/${invoice.id}`} className="text-indigo-600 hover:underline">
-              open invoice
+              {t("open invoice")}
             </Link>
-            {savedAt ? ` · saved ${new Date(savedAt).toLocaleString()}` : " · not saved yet"}
+            {savedAt ? ` · ${t("saved {date}", { date: new Date(savedAt).toLocaleString() })}` : ` · ${t("not saved yet")}`}
           </p>
         </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
 
         {/* Template picker */}
         <div className="grid grid-cols-2 gap-3">
-          {TEMPLATES.map((t) => (
+          {TEMPLATES.map((tp) => (
             <button
-              key={t.id}
-              onClick={() => set({ template: t.id })}
+              key={tp.id}
+              onClick={() => set({ template: tp.id })}
               className={clsx(
                 "rounded-xl border p-3 text-left",
-                form.template === t.id ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500" : "border-slate-200 bg-white hover:bg-slate-50",
+                form.template === tp.id ? "border-indigo-500 bg-indigo-50 ring-1 ring-indigo-500" : "border-slate-200 bg-white hover:bg-slate-50",
               )}
             >
-              <p className={clsx("text-sm font-semibold", form.template === t.id ? "text-indigo-700" : "text-slate-900")}>{t.label}</p>
-              <p className="text-xs text-slate-500">{t.hint}</p>
+              <p className={clsx("text-sm font-semibold", form.template === tp.id ? "text-indigo-700" : "text-slate-900")}>{t(tp.label)}</p>
+              <p className="text-xs text-slate-500">{t(tp.hint)}</p>
             </button>
           ))}
         </div>
@@ -339,7 +344,7 @@ function CustomInvoiceContent() {
 
             <section className="rounded-2xl border border-slate-200 bg-white p-5">
               <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                <Lock size={15} className="text-slate-400" /> Items (from the invoice, can&apos;t be changed here)
+                <Lock size={15} className="text-slate-400" /> {t("Items (from the invoice, can't be changed here)")}
               </h2>
               <div className="mt-3 divide-y divide-slate-100">
                 {invoice.items.map((li, idx) => (
@@ -355,7 +360,7 @@ function CustomInvoiceContent() {
                 ))}
               </div>
               <div className="mt-2 flex justify-between border-t border-slate-200 pt-2 text-sm font-semibold text-slate-900">
-                <span>Total</span>
+                <span>{t("Total")}</span>
                 <span>{money(invoice.total)}</span>
               </div>
             </section>

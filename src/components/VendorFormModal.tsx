@@ -6,6 +6,7 @@ import { createVendorApi, updateVendorApi } from "@/lib/purchaseApi";
 import { useAppAuth } from "@/lib/useAppAuth";
 import type { Vendor } from "@/lib/types";
 import { X } from "lucide-react";
+import { useT } from "@/lib/useLang";
 
 const fields = [
   { key: "name", label: "Vendor name" },
@@ -23,6 +24,7 @@ type Form = Record<(typeof fields)[number]["key"] | "notes", string>;
  */
 export default function VendorFormModal({ vendor, initialName, onClose, onSaved }: { vendor?: Vendor; initialName?: string; onClose: () => void; onSaved?: (v: Vendor) => void }) {
   const { authedFetch } = useAppAuth();
+  const t = useT();
   const [form, setForm] = useState<Form>({
     name: vendor?.name ?? initialName ?? "",
     contactName: vendor?.contactName ?? "",
@@ -36,7 +38,7 @@ export default function VendorFormModal({ vendor, initialName, onClose, onSaved 
   const [operationId] = useState(newOperationId);
 
   async function save() {
-    if (!form.name.trim()) return setError("Enter the vendor name.");
+    if (!form.name.trim()) return setError(t("Enter the vendor name."));
     setSaving(true);
     setError("");
     try {
@@ -48,7 +50,7 @@ export default function VendorFormModal({ vendor, initialName, onClose, onSaved 
       }
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save vendor.");
+      setError(e instanceof Error ? t(e.message) : t("Failed to save vendor."));
     } finally {
       setSaving(false);
     }
@@ -59,7 +61,7 @@ export default function VendorFormModal({ vendor, initialName, onClose, onSaved 
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30">
       <div className="w-full md:max-w-md rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-slate-900">{vendor ? "Edit vendor" : "Add vendor"}</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{vendor ? t("Edit vendor") : t("Add vendor")}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700">
             <X size={18} />
           </button>
@@ -67,22 +69,22 @@ export default function VendorFormModal({ vendor, initialName, onClose, onSaved 
         <div className="space-y-3">
           {fields.map((f) => (
             <div key={f.key}>
-              <label className="text-xs font-medium text-slate-600">{f.label}</label>
+              <label className="text-xs font-medium text-slate-600">{t(f.label)}</label>
               <input className={input} value={form[f.key]} onChange={(e) => setForm({ ...form, [f.key]: e.target.value })} />
             </div>
           ))}
           <div>
-            <label className="text-xs font-medium text-slate-600">Notes</label>
+            <label className="text-xs font-medium text-slate-600">{t("Notes")}</label>
             <textarea className={input} rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100">
-            Cancel
+            {t("Cancel")}
           </button>
           <button onClick={save} disabled={saving} className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50">
-            {saving ? "Saving…" : "Save"}
+            {saving ? t("Saving…") : t("Save")}
           </button>
         </div>
       </div>

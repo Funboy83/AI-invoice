@@ -7,6 +7,7 @@ import { watchInvoices } from "@/lib/store";
 import { useAppAuth } from "@/lib/useAppAuth";
 import { findSimilar } from "@/lib/similarity";
 import { isCommittedStatus, type Invoice } from "@/lib/types";
+import { useT } from "@/lib/useLang";
 
 /**
  * Custom Invoice: the same invoices as the Invoices tab. Tapping one opens its Custom Invoice form, where only the
@@ -15,6 +16,7 @@ import { isCommittedStatus, type Invoice } from "@/lib/types";
  */
 export default function CustomInvoicesPage() {
   const { reportListenerError } = useAppAuth();
+  const t = useT();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [query, setQuery] = useState("");
 
@@ -41,15 +43,15 @@ export default function CustomInvoicesPage() {
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-5 pb-24 md:pb-8">
       <div>
-        <h1 className="text-2xl font-semibold text-slate-900">Custom Invoice</h1>
-        <p className="text-sm text-slate-500 mt-1">Print an invoice with a different template, or tap Edit to add company info, dates and notes first.</p>
+        <h1 className="text-2xl font-semibold text-slate-900">{t("Custom Invoice")}</h1>
+        <p className="text-sm text-slate-500 mt-1">{t("Print an invoice with a different template, or tap Edit to add company info, dates and notes first.")}</p>
       </div>
 
       <div className="relative">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
         <input
           className="w-full rounded-xl border border-slate-300 bg-white pl-9 pr-3 py-2.5 text-base"
-          placeholder="Tìm số hóa đơn hoặc tên khách..."
+          placeholder={t("Search invoice number or customer name...")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -71,17 +73,17 @@ export default function CustomInvoicesPage() {
               href={`/custom-invoices/${inv.id}?print=1`}
               className="flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shrink-0"
             >
-              <Printer size={14} /> Print
+              <Printer size={14} /> {t("Print")}
             </Link>
             <Link
               href={`/custom-invoices/${inv.id}?edit=1`}
               className="flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 shrink-0"
             >
-              <Pencil size={14} /> Edit
+              <Pencil size={14} /> {t("Edit")}
             </Link>
           </div>
         ))}
-        {shown.length === 0 && <p className="px-5 py-10 text-center text-sm text-slate-400">{q ? "No matching invoices." : "No invoices yet."}</p>}
+        {shown.length === 0 && <p className="px-5 py-10 text-center text-sm text-slate-400">{q ? t("No matching invoices.") : t("No invoices yet.")}</p>}
       </div>
     </div>
   );

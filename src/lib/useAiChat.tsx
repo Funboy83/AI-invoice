@@ -58,8 +58,9 @@ interface AiChat {
   notice: string | null;
 }
 
+// Screen text below is English and translated where it is shown (useLang), so the language switch covers it.
 const WELCOME =
-  "Chào bạn! Mình là trợ lý AI của cửa hàng — bạn có thể dán tin nhắn đặt hàng của khách, hỏi công nợ, tìm invoice, hoặc nhờ mình sửa invoice. Có gì mình sẽ hỏi lại nếu chưa rõ nhé.";
+  "Hi! I'm the store's AI secretary. You can paste a customer's order message, ask what someone owes, look up an invoice, or ask me to fix an invoice. If anything is unclear I'll ask you.";
 
 const Ctx = createContext<AiChat | null>(null);
 
@@ -85,7 +86,7 @@ function savePending(uid: string, list: PendingSend[]) {
   }
 }
 
-const UNSENT_TEXT = "Chưa gửi được (có thể mất kết nối). Bấm Gửi lại — tin nhắn sẽ không bị gửi hai lần.";
+const UNSENT_TEXT = "Not sent yet (the connection may have dropped). Tap Resend — the message will not be sent twice.";
 const RESUME_POLL_MS = 30_000;
 
 /**
@@ -128,7 +129,7 @@ export function AiChatProvider({ children }: { children: ReactNode }) {
       },
       (err) => {
         console.error("[chat] transcript listener", err);
-        setSnapshotError("Không đọc được cuộc trò chuyện. Thử tải lại trang.");
+        setSnapshotError("Couldn't read the conversation. Try reloading the page.");
         if (isPermissionDenied(err)) notifyPossibleRevocation();
       }
     );
@@ -196,7 +197,7 @@ export function AiChatProvider({ children }: { children: ReactNode }) {
           return;
         }
         const data = await res.json().catch(() => ({}));
-        const message: string = data.error ?? "Có lỗi xảy ra.";
+        const message: string = data.error ?? "Something went wrong.";
         if (res.status === 401 || res.status === 403) notifyPossibleRevocation();
         // 4xx (except busy/timeout) will fail again identically; anything else may succeed if she retries.
         const permanent = res.status >= 400 && res.status < 500 && res.status !== 408 && res.status !== 429;
@@ -238,11 +239,11 @@ export function AiChatProvider({ children }: { children: ReactNode }) {
         const res = await authedFetch(`/api/chat/jobs/${jobId}/retry`, { method: "POST" });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          setNotice(data.error ?? "Không thử lại được.");
+          setNotice(data.error ?? "Couldn't retry.");
           if (res.status === 401 || res.status === 403) notifyPossibleRevocation();
         }
       } catch {
-        setNotice("Không kết nối được máy chủ — thử lại sau nhé.");
+        setNotice("Couldn't reach the server — please try again later.");
       }
     },
     [authedFetch, notifyPossibleRevocation]
@@ -320,35 +321,40 @@ export function useAiChat(): AiChat {
 
 export const CHAT_WELCOME = WELCOME;
 
-export function actionSummary(tool: string, result: unknown): string {
+type T = (text: string, vars?: Record<string, string | number>) => string;
+const same: T = (text, vars) => (vars ? text.replace(/\{(\w+)\}/g, (m, k: string) => (k in vars ? String(vars[k]) : m)) : text);
+
+export function actionSummary(tool: string, result: unknown, t: T = same): string {
   const r = (result ?? {}) as Record<string, unknown>;
   const status = typeof r.status === "string" ? r.status : undefined;
-  if (status === "awaiting_user") return `❓ Cần bạn trả lời`;
+  if (status === "awaiting_user") return `❓ ${t("Needs your answer")}`;
   if (status === "needs_confirmation" || status === "needs_new_product" || status === "needs_new_customer" || status === "needs_more_info") {
-    return `⚠️ ${tool} — cần bạn xác nhận`;
+    return `⚠️ ${t("{tool} — needs your confirmation", { tool })}`;
   }
-  if (status === "error") return `✕ ${tool} lỗi`;
-  if (tool === "createInvoiceDraft" && status === "created") return `✓ Đã tạo invoice nháp`;
-  if (tool === "createProduct" && status === "created") return `✓ Đã thêm sản phẩm`;
-  if (tool === "createCustomer" && status === "created") return `✓ Đã thêm khách hàng`;
-  if (tool === "recordPayment") return `✓ Đã ghi nhận thanh toán`;
-  if (tool === "finalizeInvoice") return `✓ Invoice đã hoàn tất`;
-  if (tool.startsWith("update") || tool.startsWith("add") || tool.startsWith("remove")) return `✓ ${tool} (đã ghi log)`;
+  if (status === "error") return `✕ ${t("{tool} failed", { tool })}`;
+  if (tool === "createInvoiceDraft" && status === "created") return `✓ ${t("Draft invoice created")}`;
+  if (tool === "createProduct" && status === "created") return `✓ ${t("Product added")}`;
+  if (tool === "createCustomer" && status === "created") return `✓ ${t("Customer added")}`;
+  if (tool === "recordPayment") return `✓ ${t("Payment recorded")}`;
+  if (tool === "finalizeInvoice") return `✓ ${t("Invoice finished")}`;
+  if (tool.startsWith("update") || tool.startsWith("add") || tool.startsWith("remove")) return `✓ ${t("{tool} (logged)", { tool })}`;
   return `✓ ${tool}`;
 }
 
+/** Shortcut buttons on the empty chat; each is put in the box (translated) for her to finish. */
 export const QUICK_ACTIONS = [
-  "Tạo invoice cho ",
-  "Tìm invoice ",
-  "Khách này còn nợ bao nhiêu?",
-  "Invoice nào chưa thanh toán?",
-  "Tìm khách hàng ",
-  "Tìm sản phẩm ",
+  "Make an invoice for ",
+  "Find invoice ",
+  "How much does this customer still owe?",
+  "Which invoices are unpaid?",
+  "Find customer ",
+  "Find product ",
 ];
 
 /**
  * Suggested next step after a reply, like KiotViet's quick buttons. `send: true` sends right away (only for
  * questions that just read data); everything else is put in the box so she can check or finish it before sending.
+ * Labels and texts are English keys, translated where they are shown (ChatThread).
  */
 export interface FollowUp {
   label: string;
@@ -367,29 +373,29 @@ export function followUpsFor(actions: { tool: string; result: unknown }[] | unde
   if (!last) return [];
   if (INVOICE_EDIT_TOOLS.has(last)) {
     return [
-      { label: "Hoàn tất invoice này", text: "Hoàn tất invoice này", send: false },
-      { label: "Thêm món", text: "Thêm ", send: false },
-      { label: "Khách trả tiền", text: "Khách trả ", send: false },
+      { label: "Finish this invoice", text: "Finish this invoice", send: false },
+      { label: "Add item", text: "Add ", send: false },
+      { label: "Customer pays", text: "Customer pays ", send: false },
     ];
   }
   if (last === "finalizeInvoice") {
     return [
-      { label: "Khách trả tiền", text: "Khách trả ", send: false },
-      { label: "Khách này còn nợ bao nhiêu?", text: "Khách này còn nợ bao nhiêu?", send: true },
+      { label: "Customer pays", text: "Customer pays ", send: false },
+      { label: "How much does this customer still owe?", text: "How much does this customer still owe?", send: true },
     ];
   }
-  if (last === "recordPayment") return [{ label: "Khách này còn nợ bao nhiêu?", text: "Khách này còn nợ bao nhiêu?", send: true }];
+  if (last === "recordPayment") return [{ label: "How much does this customer still owe?", text: "How much does this customer still owe?", send: true }];
   if (last === "getCustomerDebt") {
     return [
-      { label: "Khách trả tiền", text: "Khách trả ", send: false },
-      { label: "Tạo invoice cho khách này", text: "Tạo invoice cho khách này: ", send: false },
+      { label: "Customer pays", text: "Customer pays ", send: false },
+      { label: "Make an invoice for this customer", text: "Make an invoice for this customer: ", send: false },
     ];
   }
-  if (last === "getUnpaidInvoices") return [{ label: "Ai nợ nhiều nhất?", text: "Khách nào đang nợ nhiều nhất?", send: true }];
+  if (last === "getUnpaidInvoices") return [{ label: "Who owes the most?", text: "Which customer owes the most right now?", send: true }];
   if (last === "createCustomer" || last === "getCustomer" || last === "searchCustomer") {
     return [
-      { label: "Tạo invoice cho khách này", text: "Tạo invoice cho khách này: ", send: false },
-      { label: "Khách này còn nợ bao nhiêu?", text: "Khách này còn nợ bao nhiêu?", send: true },
+      { label: "Make an invoice for this customer", text: "Make an invoice for this customer: ", send: false },
+      { label: "How much does this customer still owe?", text: "How much does this customer still owe?", send: true },
     ];
   }
   return [];

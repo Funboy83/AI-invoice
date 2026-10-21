@@ -16,6 +16,7 @@ import DeliveryBadge from "@/components/DeliveryBadge";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 import CustomerFormModal from "@/components/CustomerFormModal";
 import ProductQuickAddModal from "@/components/ProductQuickAddModal";
+import { useT } from "@/lib/useLang";
 
 type DateRange = "all" | "today" | "month" | "day";
 
@@ -64,6 +65,7 @@ export default function InvoicesPage() {
 function InvoicesPageContent() {
   const router = useRouter();
   const { authedFetch, reportListenerError } = useAppAuth();
+  const t = useT();
   const [allInvoices, setInvoices] = useState<Invoice[]>([]);
   // Opened from a chat shortcut: /invoices?customer=… (one customer's invoices) and/or ?status=unpaid (unpaid + partial).
   const searchParams = useSearchParams();
@@ -153,14 +155,14 @@ function InvoicesPageContent() {
 
   async function handleCreate() {
     setError("");
-    if (!customerName.trim()) return setError("Customer name is required.");
-    if (lines.length === 0) return setError("Add at least one line item.");
+    if (!customerName.trim()) return setError(t("Customer name is required."));
+    if (lines.length === 0) return setError(t("Add at least one line item."));
 
     const items: InvoiceLineItem[] = [];
     for (const line of lines) {
       const product = products.find((p) => p.id === line.productId);
-      if (!product) return setError(`Pick or add a product for "${line.productName || "one of the lines"}" first.`);
-      if (line.quantity <= 0) return setError(`Quantity for ${product.name} must be greater than 0.`);
+      if (!product) return setError(t("Pick or add a product for \"{name}\" first.", { name: line.productName || t("one of the lines") }));
+      if (line.quantity <= 0) return setError(t("Quantity for {name} must be greater than 0.", { name: product.name }));
       items.push({
         productId: product.id,
         productName: product.name,
@@ -193,7 +195,7 @@ function InvoicesPageContent() {
       const warningQuery = stockWarnings?.length ? `?stockWarning=${encodeURIComponent(stockWarnings.join(" | "))}` : "";
       router.push(`/invoices/${invoice.id}${warningQuery}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create invoice.");
+      setError(e instanceof Error ? t(e.message) : t("Failed to create invoice."));
     } finally {
       setSaving(false);
     }
@@ -203,8 +205,8 @@ function InvoicesPageContent() {
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6 pb-24 md:pb-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Invoices</h1>
-          <p className="text-sm text-slate-500 mt-1 hidden md:block">Create manually, or ask the AI secretary to draft one for you.</p>
+          <h1 className="text-2xl font-semibold text-slate-900">{t("Invoices")}</h1>
+          <p className="text-sm text-slate-500 mt-1 hidden md:block">{t("Create manually, or ask the AI secretary to draft one for you.")}</p>
         </div>
         <div className="flex items-center gap-2">
           {/* Always-visible way in: opens the same form with "Delivery order" already ticked. */}
@@ -212,13 +214,13 @@ function InvoicesPageContent() {
             onClick={() => openModal(true)}
             className="flex items-center gap-1.5 rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100"
           >
-            <Truck size={16} /> Đơn giao
+            <Truck size={16} /> {t("Delivery order")}
           </button>
           <button
             onClick={() => openModal()}
             className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
           >
-            <Plus size={16} /> New
+            <Plus size={16} /> {t("New")}
           </button>
         </div>
       </div>
@@ -230,18 +232,18 @@ function InvoicesPageContent() {
           className="flex items-center justify-between rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-800 active:bg-violet-100"
         >
           <span className="flex items-center gap-2 font-medium">
-            <Truck size={16} /> {openDeliveries} đơn giao chưa chốt giá
+            <Truck size={16} /> {t("{n} delivery orders without final prices", { n: openDeliveries })}
           </span>
-          <span className="text-violet-600">Xem</span>
+          <span className="text-violet-600">{t("View")}</span>
         </Link>
       )}
 
       {(customerFilter || unpaidOnly || deliveryOnly) && (
         <ChatFilterBanner
           label={[
-            customerFilter ? `Invoice của ${invoices[0]?.customerName ?? "khách này"}` : "Tất cả invoice",
-            unpaidOnly ? "chưa thanh toán" : "",
-            deliveryOnly ? "đơn giao chưa chốt giá" : "",
+            customerFilter ? t("Invoices of {name}", { name: invoices[0]?.customerName ?? t("this customer") }) : t("All invoices"),
+            unpaidOnly ? t("unpaid") : "",
+            deliveryOnly ? t("delivery orders without final prices") : "",
           ].filter(Boolean).join(" · ")}
           clearHref="/invoices"
         />
@@ -262,7 +264,7 @@ function InvoicesPageContent() {
                   dateRange === key ? "bg-white text-sky-700 shadow-sm" : "text-slate-600 hover:text-slate-900"
                 }`}
               >
-                {label}
+                {t(label)}
               </button>
             ))}
           </div>
@@ -280,21 +282,21 @@ function InvoicesPageContent() {
                 setDateRange(e.target.value ? "day" : "all");
               }}
               className="bg-transparent text-base md:text-sm focus:outline-none"
-              aria-label="Pick a day"
+              aria-label={t("Pick a day")}
             />
           </label>
         </div>
         <div className="grid grid-cols-3 gap-2 md:gap-3">
           <div className="rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-500 p-3 md:p-4 text-white shadow-sm">
-            <p className="text-[11px] md:text-xs font-medium uppercase tracking-wide text-white/80">Invoices</p>
+            <p className="text-[11px] md:text-xs font-medium uppercase tracking-wide text-white/80">{t("Invoices")}</p>
             <p className="mt-1 text-xl md:text-2xl font-semibold">{invoices.length}</p>
           </div>
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3 md:p-4">
-            <p className="text-[11px] md:text-xs font-medium uppercase tracking-wide text-emerald-700">Total</p>
+            <p className="text-[11px] md:text-xs font-medium uppercase tracking-wide text-emerald-700">{t("Total")}</p>
             <p className="mt-1 text-lg md:text-2xl font-semibold text-emerald-800">${shownTotal.toFixed(2)}</p>
           </div>
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 md:p-4">
-            <p className="text-[11px] md:text-xs font-medium uppercase tracking-wide text-amber-700">Still owed</p>
+            <p className="text-[11px] md:text-xs font-medium uppercase tracking-wide text-amber-700">{t("Still owed")}</p>
             <p className="mt-1 text-lg md:text-2xl font-semibold text-amber-800">${shownBalance.toFixed(2)}</p>
           </div>
         </div>
@@ -305,12 +307,12 @@ function InvoicesPageContent() {
         <table className="w-full text-sm">
           <thead className="bg-sky-50/70 text-sky-900/70 text-xs uppercase">
             <tr>
-              <th className="text-left px-5 py-3 font-medium">Number</th>
-              <th className="text-left px-5 py-3 font-medium">Customer</th>
-              <th className="text-left px-5 py-3 font-medium">Date</th>
-              <th className="text-right px-5 py-3 font-medium">Total (USD)</th>
-              <th className="text-right px-5 py-3 font-medium">Balance (USD)</th>
-              <th className="text-left px-5 py-3 font-medium">Status</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Number")}</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Customer")}</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Date")}</th>
+              <th className="text-right px-5 py-3 font-medium">{t("Total (USD)")}</th>
+              <th className="text-right px-5 py-3 font-medium">{t("Balance (USD)")}</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Status")}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -334,7 +336,7 @@ function InvoicesPageContent() {
                   )}
                   {isInvoiceIncomplete(inv) && (
                     <span className="ml-1.5 inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
-                      <AlertTriangle size={11} /> incomplete
+                      <AlertTriangle size={11} /> {t("incomplete")}
                     </span>
                   )}
                 </td>
@@ -343,7 +345,7 @@ function InvoicesPageContent() {
             {invoices.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-5 py-10 text-center text-slate-400">
-                  {bounds ? "No invoices in this date range." : "No invoices yet."}
+                  {bounds ? t("No invoices in this date range.") : t("No invoices yet.")}
                 </td>
               </tr>
             )}
@@ -372,18 +374,18 @@ function InvoicesPageContent() {
             )}
             {isInvoiceIncomplete(inv) && (
               <p className="flex items-center gap-1 text-[11px] font-medium text-amber-700 mt-1">
-                <AlertTriangle size={11} /> Incomplete — missing quantity/price
+                <AlertTriangle size={11} /> {t("Incomplete — missing quantity/price")}
               </p>
             )}
             <div className="flex items-center justify-between mt-2 text-sm">
               <span className="text-slate-500">{new Date(inv.date).toLocaleDateString()}</span>
               <span className="font-semibold text-slate-900">${inv.total.toFixed(2)}</span>
             </div>
-            {inv.balance > 0 && <p className="text-xs text-amber-600 mt-1">Balance: ${inv.balance.toFixed(2)}</p>}
+            {inv.balance > 0 && <p className="text-xs text-amber-600 mt-1">{t("Balance: ${amount}", { amount: inv.balance.toFixed(2) })}</p>}
           </Link>
         ))}
         {invoices.length === 0 && (
-          <p className="text-center text-sm text-slate-400 py-10">{bounds ? "No invoices in this date range." : "No invoices yet."}</p>
+          <p className="text-center text-sm text-slate-400 py-10">{bounds ? t("No invoices in this date range.") : t("No invoices yet.")}</p>
         )}
       </div>
 
@@ -391,7 +393,7 @@ function InvoicesPageContent() {
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30">
           <div className="w-full md:max-w-2xl rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-slate-900">{isDelivery ? "New delivery order (đơn giao)" : "New invoice"}</h2>
+              <h2 className="text-lg font-semibold text-slate-900">{isDelivery ? t("New delivery order") : t("New invoice")}</h2>
               <button onClick={() => setModalOpen(false)} className="text-slate-400 hover:text-slate-700">
                 <X size={18} />
               </button>
@@ -399,7 +401,7 @@ function InvoicesPageContent() {
 
             <div className="space-y-4">
               <div>
-                <label className="text-xs font-medium text-slate-600">Customer</label>
+                <label className="text-xs font-medium text-slate-600">{t("Customer")}</label>
                 <SearchCombobox
                   items={customers}
                   getId={(c) => c.id}
@@ -415,20 +417,20 @@ function InvoicesPageContent() {
                     setCustomerName(c.name);
                   }}
                   onCreateNew={(name) => setQuickAddCustomer(name)}
-                  placeholder="Tìm hoặc thêm khách hàng..."
-                  createLabel="Thêm khách hàng mới"
+                  placeholder={t("Find or add a customer...")}
+                  createLabel={t("Add new customer")}
                 />
               </div>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-medium text-slate-600">Line items</label>
+                  <label className="text-xs font-medium text-slate-600">{t("Line items")}</label>
                   <button onClick={addLine} className="text-xs font-medium text-indigo-600 hover:underline">
-                    + Add item
+                    + {t("Add item")}
                   </button>
                 </div>
                 {products.length === 0 && (
-                  <p className="text-xs text-slate-400">No products yet — type a name below to create one on the fly.</p>
+                  <p className="text-xs text-slate-400">{t("No products yet — type a name below to create one on the fly.")}</p>
                 )}
                 {lines.map((line, idx) => (
                   <div key={idx} className="flex flex-wrap items-start gap-2 rounded-lg border border-slate-200 p-2">
@@ -443,8 +445,8 @@ function InvoicesPageContent() {
                         onQueryChange={(q) => updateLine(idx, { productId: "", productName: q })}
                         onSelect={(p) => updateLine(idx, { productId: p.id, productName: p.name, price: p.defaultPrice })}
                         onCreateNew={(name) => setQuickAddProduct({ idx, name })}
-                        placeholder="Tìm hoặc thêm sản phẩm..."
-                        createLabel="Thêm sản phẩm mới"
+                        placeholder={t("Find or add a product...")}
+                        createLabel={t("Add new product")}
                       />
                     </div>
                     <input
@@ -473,7 +475,7 @@ function InvoicesPageContent() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-medium text-slate-600">Shipping</label>
+                  <label className="text-xs font-medium text-slate-600">{t("Shipping")}</label>
                   <input
                     type="number"
                     step="0.01"
@@ -483,7 +485,7 @@ function InvoicesPageContent() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-slate-600">Discount</label>
+                  <label className="text-xs font-medium text-slate-600">{t("Discount")}</label>
                   <input
                     type="number"
                     step="0.01"
@@ -495,7 +497,7 @@ function InvoicesPageContent() {
               </div>
 
               <div>
-                <label className="text-xs font-medium text-slate-600">Notes (optional)</label>
+                <label className="text-xs font-medium text-slate-600">{t("Notes (optional)")}</label>
                 <textarea
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   rows={2}
@@ -512,8 +514,8 @@ function InvoicesPageContent() {
                   onChange={(e) => setIsDelivery(e.target.checked)}
                 />
                 <span>
-                  <span className="font-medium">Delivery order (đơn giao hàng)</span>
-                  <span className="block text-xs text-slate-500">Prices can stay $0 now and be set later with &quot;Chốt giá&quot;.</span>
+                  <span className="font-medium">{t("Delivery order")}</span>
+                  <span className="block text-xs text-slate-500">{t("Prices can stay $0 now and be set later with \"Set final prices\".")}</span>
                 </span>
               </label>
 
@@ -521,21 +523,21 @@ function InvoicesPageContent() {
 
               <div className="flex items-center justify-between pt-2 border-t border-slate-100">
                 <p className="text-sm text-slate-600">
-                  Total: <span className="font-semibold text-slate-900">${total.toFixed(2)}</span>
+                  {t("Total:")} <span className="font-semibold text-slate-900">${total.toFixed(2)}</span>
                 </p>
                 <div className="flex gap-2">
                   <button
                     onClick={() => setModalOpen(false)}
                     className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
                   >
-                    Cancel
+                    {t("Cancel")}
                   </button>
                   <button
                     onClick={handleCreate}
                     disabled={saving}
                     className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
                   >
-                    {saving ? "Creating…" : "Create invoice"}
+                    {saving ? t("Creating…") : t("Create invoice")}
                   </button>
                 </div>
               </div>

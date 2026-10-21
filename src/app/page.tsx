@@ -8,6 +8,7 @@ import { isInvoiceIncomplete, type Product, type Customer, type Invoice } from "
 import { FileText, Boxes, Users, AlertTriangle } from "lucide-react";
 import MobileChatHome from "@/components/MobileChatHome";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
+import { useT } from "@/lib/useLang";
 
 // Each tile has its own colour so the numbers are easy to tell apart; they match the menu (Invoices blue, Products orange, Customers green).
 const statTones = {
@@ -33,6 +34,7 @@ function StatCard({ label, value, icon: Icon, tone = "indigo" }: { label: string
 
 function DashboardContent() {
   const { reportListenerError } = useAppAuth();
+  const t = useT();
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -58,23 +60,23 @@ function DashboardContent() {
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold text-slate-900">Dashboard</h1>
-        <p className="text-sm text-slate-500 mt-1">Overview of your invoices, products, and customers.</p>
+        <h1 className="text-2xl font-semibold text-slate-900">{t("Dashboard")}</h1>
+        <p className="text-sm text-slate-500 mt-1">{t("Overview of your invoices, products, and customers.")}</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total invoices" value={String(invoices.length)} icon={FileText} tone="sky" />
-        <StatCard label="Revenue (USD)" value={`$${revenue.toFixed(2)}`} icon={FileText} tone="indigo" />
-        <StatCard label="Products" value={String(products.length)} icon={Boxes} tone="amber" />
-        <StatCard label="Customers" value={String(customers.length)} icon={Users} tone="emerald" />
+        <StatCard label={t("Total invoices")} value={String(invoices.length)} icon={FileText} tone="sky" />
+        <StatCard label={t("Revenue (USD)")} value={`$${revenue.toFixed(2)}`} icon={FileText} tone="indigo" />
+        <StatCard label={t("Products")} value={String(products.length)} icon={Boxes} tone="amber" />
+        <StatCard label={t("Customers")} value={String(customers.length)} icon={Users} tone="emerald" />
       </div>
 
       {outstanding > 0 && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3">
           <AlertTriangle size={18} className="text-amber-600 mt-0.5" />
           <div className="text-sm text-amber-800">
-            <p className="font-medium">Outstanding balance</p>
-            <p className="mt-0.5">${outstanding.toFixed(2)} across unpaid/partial invoices.</p>
+            <p className="font-medium">{t("Outstanding balance")}</p>
+            <p className="mt-0.5">{t("${amount} across unpaid/partial invoices.", { amount: outstanding.toFixed(2) })}</p>
           </div>
         </div>
       )}
@@ -84,10 +86,10 @@ function DashboardContent() {
           <AlertTriangle size={18} className="text-amber-600 mt-0.5" />
           <div className="text-sm text-amber-800">
             <p className="font-medium">
-              {incompleteDrafts.length} incomplete temp {incompleteDrafts.length === 1 ? "draft" : "drafts"}
+              {t(incompleteDrafts.length === 1 ? "{n} incomplete temp draft" : "{n} incomplete temp drafts", { n: incompleteDrafts.length })}
             </p>
             <p className="mt-0.5">
-              Missing quantity/price on some items — open{" "}
+              {t("Missing quantity/price on some items — open")}{" "}
               {incompleteDrafts.slice(0, 3).map((inv, i) => (
                 <span key={inv.id}>
                   {i > 0 && ", "}
@@ -96,7 +98,7 @@ function DashboardContent() {
                   </Link>
                 </span>
               ))}{" "}
-              to finish or void it.
+              {t("to finish or void it.")}
             </p>
           </div>
         </div>
@@ -104,9 +106,9 @@ function DashboardContent() {
 
       <div className="rounded-2xl border border-slate-200 bg-white">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
-          <h2 className="text-sm font-semibold text-slate-900">Recent invoices</h2>
+          <h2 className="text-sm font-semibold text-slate-900">{t("Recent invoices")}</h2>
           <Link href="/invoices" className="text-xs font-medium text-indigo-600 hover:underline">
-            View all
+            {t("View all")}
           </Link>
         </div>
         <div className="divide-y divide-slate-100">
@@ -130,7 +132,7 @@ function DashboardContent() {
           ))}
           {invoices.length === 0 && (
             <p className="px-5 py-8 text-center text-sm text-slate-400">
-              No invoices yet — create one manually or ask the AI secretary.
+              {t("No invoices yet — create one manually or ask the AI secretary.")}
             </p>
           )}
         </div>

@@ -8,6 +8,7 @@ import ProductFormModal from "@/components/ProductFormModal";
 import { useAppAuth } from "@/lib/useAppAuth";
 import type { Product } from "@/lib/types";
 import { Plus, Pencil, ChevronRight } from "lucide-react";
+import { useT } from "@/lib/useLang";
 
 // useSearchParams (filters opened from a chat shortcut) needs a Suspense boundary to build.
 export default function ProductsPage() {
@@ -20,6 +21,7 @@ export default function ProductsPage() {
 
 function ProductsPageContent() {
   const { reportListenerError } = useAppAuth();
+  const t = useT();
   const [allProducts, setProducts] = useState<Product[]>([]);
   // Opened from a chat shortcut (/products?id=…): show just that product.
   const focusId = useSearchParams().get("id");
@@ -32,7 +34,7 @@ function ProductsPageContent() {
       ? allProducts
       : allProducts.filter((p) => p.active);
   const emptyMessage =
-    !showInactive && inactiveCount > 0 ? "No active products. Tap \"Show inactive\" to see hidden ones." : null;
+    !showInactive && inactiveCount > 0 ? t("No active products. Tap \"Show inactive\" to see hidden ones.") : null;
 
   // null = closed; "new" = Add product; a product = editing it (the same form the product page's Edit opens).
   const [editing, setEditing] = useState<Product | "new" | null>(null);
@@ -46,19 +48,19 @@ function ProductsPageContent() {
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6 pb-24 md:pb-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Products</h1>
-          <p className="text-sm text-slate-500 mt-1">Catalog with aliases so the AI recognizes nicknames &amp; typos.</p>
+          <h1 className="text-2xl font-semibold text-slate-900">{t("Products")}</h1>
+          <p className="text-sm text-slate-500 mt-1">{t("Catalog with aliases so the AI recognizes nicknames & typos.")}</p>
         </div>
         <button
           onClick={() => setEditing("new")}
           className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
         >
-          <Plus size={16} /> Add product
+          <Plus size={16} /> {t("Add product")}
         </button>
       </div>
 
       {/* Desktop table */}
-      {focusId && <ChatFilterBanner label="Đang xem sản phẩm mở từ chat" clearHref="/products" />}
+      {focusId && <ChatFilterBanner label={t("Showing the product opened from chat")} clearHref="/products" />}
 
       {!focusId && (
         <div className="flex justify-end">
@@ -70,7 +72,7 @@ function ProductsPageContent() {
                 : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
             }`}
           >
-            {showInactive ? "Hide inactive" : `Show inactive (${inactiveCount})`}
+            {showInactive ? t("Hide inactive") : t("Show inactive ({n})", { n: inactiveCount })}
           </button>
         </div>
       )}
@@ -79,12 +81,12 @@ function ProductsPageContent() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
             <tr>
-              <th className="text-left px-5 py-3 font-medium">Name</th>
-              <th className="text-left px-5 py-3 font-medium">Aliases</th>
-              <th className="text-right px-5 py-3 font-medium">Price</th>
-              <th className="text-left px-5 py-3 font-medium">Unit</th>
-              <th className="text-right px-5 py-3 font-medium">Stock</th>
-              <th className="text-left px-5 py-3 font-medium">Category</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Name")}</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Aliases")}</th>
+              <th className="text-right px-5 py-3 font-medium">{t("Price")}</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Unit")}</th>
+              <th className="text-right px-5 py-3 font-medium">{t("Stock")}</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Category")}</th>
               <th className="px-5 py-3"></th>
             </tr>
           </thead>
@@ -108,7 +110,7 @@ function ProductsPageContent() {
                 <td className="px-5 py-3 text-right text-slate-900">${p.defaultPrice.toFixed(2)}</td>
                 <td className="px-5 py-3 text-slate-500">{p.defaultUnit}</td>
                 <td className={`px-5 py-3 text-right font-medium ${p.quantity !== undefined && p.quantity < 0 ? "text-red-600" : "text-slate-900"}`}>
-                  {p.quantity !== undefined ? p.quantity : <span className="text-xs text-slate-400">Not counted</span>}
+                  {p.quantity !== undefined ? p.quantity : <span className="text-xs text-slate-400">{t("Not counted")}</span>}
                 </td>
                 <td className="px-5 py-3 text-slate-500">{p.category || "—"}</td>
                 <td className="px-5 py-3 text-right">
@@ -117,7 +119,7 @@ function ProductsPageContent() {
                       e.stopPropagation(); // the pencil edits right here; the rest of the row opens the product page
                       setEditing(p);
                     }}
-                    title="Edit"
+                    title={t("Edit")}
                     className="text-slate-400 hover:text-indigo-600"
                   >
                     <Pencil size={15} />
@@ -128,7 +130,7 @@ function ProductsPageContent() {
             {products.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-5 py-10 text-center text-slate-400">
-                  {emptyMessage ?? "No products yet. Add one manually, or paste an order to the AI and it will offer to create it."}
+                  {emptyMessage ?? t("No products yet. Add one manually, or paste an order to the AI and it will offer to create it.")}
                 </td>
               </tr>
             )}
@@ -158,9 +160,9 @@ function ProductsPageContent() {
               {p.defaultUnit}
               {p.category ? ` · ${p.category}` : ""}
               {p.quantity !== undefined ? (
-                <span className={`font-medium ${p.quantity < 0 ? "text-red-600" : "text-slate-700"}`}> · stock: {p.quantity}</span>
+                <span className={`font-medium ${p.quantity < 0 ? "text-red-600" : "text-slate-700"}`}> · {t("stock: {n}", { n: p.quantity })}</span>
               ) : (
-                <span className="text-slate-400"> · stock: not counted</span>
+                <span className="text-slate-400"> · {t("stock: not counted")}</span>
               )}
             </p>
             {p.aliases.length > 0 && (
@@ -175,7 +177,7 @@ function ProductsPageContent() {
           </button>
         ))}
         {products.length === 0 && (
-          <p className="text-center text-sm text-slate-400 py-10">{emptyMessage ?? "No products yet."}</p>
+          <p className="text-center text-sm text-slate-400 py-10">{emptyMessage ?? t("No products yet.")}</p>
         )}
       </div>
 
@@ -185,9 +187,10 @@ function ProductsPageContent() {
 }
 
 function InactiveBadge() {
+  const t = useT();
   return (
     <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 align-middle text-[11px] font-medium text-slate-600">
-      Inactive
+      {t("Inactive")}
     </span>
   );
 }

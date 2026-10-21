@@ -5,10 +5,13 @@ import { Loader2, LogIn } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useAppAuth } from "@/lib/useAppAuth";
 import { openChatAfterSignIn } from "./ChatPanel";
+import LanguageSwitch from "./LanguageSwitch";
+import { useT } from "@/lib/useLang";
 
 /** Sign-in screen shown by RequireAuth in front of both business pages and the chat UI. */
 export default function ChatSignIn({ compact = false }: { compact?: boolean }) {
   const { signIn } = useAppAuth();
+  const t = useT();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,8 +34,11 @@ export default function ChatSignIn({ compact = false }: { compact?: boolean }) {
 
   return (
     <form onSubmit={submit} className="flex flex-1 flex-col justify-center gap-3 px-6 py-8">
+      <div className="flex justify-end">
+        <LanguageSwitch />
+      </div>
       <p className={compact ? "text-sm text-slate-600" : "text-[15px] text-slate-600"}>
-        Đăng nhập để dùng trợ lý AI. Cuộc trò chuyện của bạn được lưu riêng, đóng app rồi mở lại vẫn thấy.
+        {t("Sign in to use the AI secretary. Your conversation is saved for you, so it is still here after you close and reopen the app.")}
       </p>
       <input
         type="email"
@@ -48,17 +54,17 @@ export default function ChatSignIn({ compact = false }: { compact?: boolean }) {
         autoComplete="current-password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
-        placeholder="Mật khẩu"
+        placeholder={t("Password")}
         className="rounded-xl border border-slate-300 px-4 py-3 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
       />
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-red-600">{t(error)}</p>}
       <button
         type="submit"
         disabled={busy || !email.trim() || !password}
         className="flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-base font-medium text-white disabled:opacity-40 active:bg-indigo-700"
       >
         {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />}
-        Đăng nhập
+        {t("Sign in")}
       </button>
     </form>
   );

@@ -13,8 +13,11 @@ import { printFileName } from "@/lib/printFileName";
 import { money } from "@/components/customInvoice/shared";
 import StatementPrint from "@/components/StatementPrint";
 import type { Customer, Invoice } from "@/lib/types";
+import { useT } from "@/lib/useLang";
 
 type Filter = "all" | "unpaid" | "paid";
+
+const STATUS_LABEL: Record<string, string> = { unpaid: "Unpaid", partial: "Partial", paid: "Paid" };
 
 const statusStyles: Record<string, string> = {
   unpaid: "bg-blue-100 text-blue-700",
@@ -29,6 +32,7 @@ const statusStyles: Record<string, string> = {
 export default function PaymentRequestPage() {
   const { id } = useParams<{ id: string }>();
   const { reportListenerError } = useAppAuth();
+  const t = useT();
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
@@ -65,14 +69,14 @@ export default function PaymentRequestPage() {
   const customer = customers?.find((c) => c.id === id);
 
   if (customers === null || invoices === null) {
-    return <div className="p-8 text-center text-sm text-slate-400">Loading…</div>;
+    return <div className="p-8 text-center text-sm text-slate-400">{t("Loading…")}</div>;
   }
   if (!customer) {
     return (
       <div className="p-8 text-center text-sm text-slate-500 space-y-3">
-        <p>This customer was not found.</p>
+        <p>{t("This customer was not found.")}</p>
         <Link href="/customers" className="text-indigo-600">
-          Back to customers
+          {t("Back to customers")}
         </Link>
       </div>
     );
@@ -102,9 +106,9 @@ export default function PaymentRequestPage() {
   };
 
   const filters: { key: Filter; label: string }[] = [
-    { key: "all", label: "All" },
-    { key: "unpaid", label: "Unpaid" },
-    { key: "paid", label: "Paid" },
+    { key: "all", label: t("All") },
+    { key: "unpaid", label: t("Unpaid") },
+    { key: "paid", label: t("Paid") },
   ];
   const statement = <StatementPrint customer={customer} invoices={picked} printedAt={printedAt} />;
 
@@ -120,13 +124,13 @@ export default function PaymentRequestPage() {
             disabled={picked.length === 0}
             className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
           >
-            <Printer size={15} /> Print
+            <Printer size={15} /> {t("Print")}
           </button>
         </div>
 
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Payment request</h1>
-          <p className="text-sm text-slate-500 mt-1">Tick the invoices to put on the page. Nothing here changes an invoice or payment.</p>
+          <h1 className="text-2xl font-semibold text-slate-900">{t("Payment request")}</h1>
+          <p className="text-sm text-slate-500 mt-1">{t("Tick the invoices to put on the page. Nothing here changes an invoice or payment.")}</p>
         </div>
 
         <div className="grid grid-cols-[minmax(0,1fr)] gap-5 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start">
@@ -148,8 +152,8 @@ export default function PaymentRequestPage() {
             <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
               <label className="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5 text-xs font-medium uppercase text-slate-500">
                 <input type="checkbox" checked={allTicked} onChange={toggleAll} disabled={shown.length === 0} className="h-5 w-5 accent-emerald-600" />
-                <span className="flex-1">Invoice</span>
-                <span>Owed</span>
+                <span className="flex-1">{t("Invoice")}</span>
+                <span>{t("Owed")}</span>
               </label>
               <div className="divide-y divide-slate-100">
                 {shown.map((inv) => (
@@ -158,10 +162,10 @@ export default function PaymentRequestPage() {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium text-slate-900">#{inv.invoiceNumber}</span>
-                        <span className={`text-[10px] uppercase font-medium px-2 py-0.5 rounded-full ${statusStyles[inv.paymentStatus]}`}>{inv.paymentStatus}</span>
+                        <span className={`text-[10px] uppercase font-medium px-2 py-0.5 rounded-full ${statusStyles[inv.paymentStatus]}`}>{t(STATUS_LABEL[inv.paymentStatus] ?? inv.paymentStatus)}</span>
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        {new Date(inv.date).toLocaleDateString()} · Total {money(inv.total)}
+                        {new Date(inv.date).toLocaleDateString()} · {t("Total")} {money(inv.total)}
                       </p>
                     </div>
                     <span className={`text-sm font-semibold ${statementOwed(inv) > 0 ? "text-amber-700" : "text-emerald-700"}`}>{money(statementOwed(inv))}</span>
@@ -169,7 +173,7 @@ export default function PaymentRequestPage() {
                 ))}
                 {shown.length === 0 && (
                   <p className="text-center text-sm text-slate-400 py-8">
-                    {filter === "unpaid" ? "No unpaid invoices." : filter === "paid" ? "No paid invoices yet." : "No invoices yet."}
+                    {filter === "unpaid" ? t("No unpaid invoices.") : filter === "paid" ? t("No paid invoices yet.") : t("No invoices yet.")}
                   </p>
                 )}
               </div>
@@ -177,20 +181,18 @@ export default function PaymentRequestPage() {
 
             <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm">
               <div className="flex justify-between text-slate-700">
-                <span>
-                  {totals.count} picked · billed {money(totals.totalBilled)}
-                </span>
-                <span>paid {money(totals.totalPaid)}</span>
+                <span>{t("{n} picked · billed {amount}", { n: totals.count, amount: money(totals.totalBilled) })}</span>
+                <span>{t("paid {amount}", { amount: money(totals.totalPaid) })}</span>
               </div>
               <div className="mt-1 flex justify-between text-base font-semibold text-amber-800">
-                <span>Still owed</span>
+                <span>{t("Still owed")}</span>
                 <span>{money(totals.totalOwed)}</span>
               </div>
             </div>
           </section>
 
           <section>
-            <p className="mb-2 text-xs font-medium uppercase text-slate-500">Print preview</p>
+            <p className="mb-2 text-xs font-medium uppercase text-slate-500">{t("Print preview")}</p>
             <FitToWidth width={720}>
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">{statement}</div>
             </FitToWidth>

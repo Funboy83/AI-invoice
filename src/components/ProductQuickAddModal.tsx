@@ -5,6 +5,7 @@ import { createProductApi, newOperationId } from "@/lib/businessApi";
 import { useAppAuth } from "@/lib/useAppAuth";
 import type { Product } from "@/lib/types";
 import { X } from "lucide-react";
+import { useT } from "@/lib/useLang";
 
 const inputClass =
   "mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500";
@@ -29,6 +30,7 @@ export default function ProductQuickAddModal({
   onClose: () => void;
 }) {
   const { authedFetch } = useAppAuth();
+  const t = useT();
   const [name, setName] = useState(initialName);
   const [aliases, setAliases] = useState("");
   const [defaultUnit, setDefaultUnit] = useState(initialUnit || "thùng");
@@ -42,10 +44,10 @@ export default function ProductQuickAddModal({
   const [operationId] = useState(newOperationId);
 
   async function handleSave() {
-    if (!name.trim()) return setError("Name is required.");
-    if (defaultPrice === "" || !(Number(defaultPrice) >= 0)) return setError("Enter a price (0 is OK).");
-    if (cost !== "" && !(Number(cost) >= 0)) return setError("Cost must be 0 or more.");
-    if (quantity !== "" && !Number.isFinite(Number(quantity))) return setError("Stock must be a number.");
+    if (!name.trim()) return setError(t("Name is required."));
+    if (defaultPrice === "" || !(Number(defaultPrice) >= 0)) return setError(t("Enter a price (0 is OK)."));
+    if (cost !== "" && !(Number(cost) >= 0)) return setError(t("Cost must be 0 or more."));
+    if (quantity !== "" && !Number.isFinite(Number(quantity))) return setError(t("Stock must be a number."));
     setSaving(true);
     setError("");
     try {
@@ -69,7 +71,7 @@ export default function ProductQuickAddModal({
       onCreated(product);
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save product.");
+      setError(e instanceof Error ? t(e.message) : t("Failed to save product."));
     } finally {
       setSaving(false);
     }
@@ -79,28 +81,28 @@ export default function ProductQuickAddModal({
     <div className="fixed inset-0 z-[60] flex items-end md:items-center justify-center bg-black/30">
       <div className="w-full md:max-w-md rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-1">
-          <h2 className="text-lg font-semibold text-slate-900">Thêm sản phẩm mới</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{t("Add new product")}</h2>
           <button onClick={() => onClose()} className="text-slate-400 hover:text-slate-700">
             <X size={18} />
           </button>
         </div>
-        <p className="mb-4 text-xs text-slate-500">Check the name and details, then tap OK to save.</p>
+        <p className="mb-4 text-xs text-slate-500">{t("Check the name and details, then tap OK to save.")}</p>
         <div className="space-y-3">
           <div>
-            <label className="text-xs font-medium text-slate-600">Name</label>
+            <label className="text-xs font-medium text-slate-600">{t("Name")}</label>
             <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">Aliases (comma-separated, optional)</label>
+            <label className="text-xs font-medium text-slate-600">{t("Aliases (comma-separated, optional)")}</label>
             <input className={inputClass} value={aliases} onChange={(e) => setAliases(e.target.value)} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-600">Unit</label>
+              <label className="text-xs font-medium text-slate-600">{t("Unit")}</label>
               <input className={inputClass} value={defaultUnit} onChange={(e) => setDefaultUnit(e.target.value)} />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Price</label>
+              <label className="text-xs font-medium text-slate-600">{t("Price")}</label>
               <input
                 type="number"
                 step="0.01"
@@ -112,7 +114,7 @@ export default function ProductQuickAddModal({
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Cost (optional)</label>
+              <label className="text-xs font-medium text-slate-600">{t("Cost (optional)")}</label>
               <input
                 type="number"
                 step="0.01"
@@ -124,7 +126,7 @@ export default function ProductQuickAddModal({
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Stock (blank = not tracked)</label>
+              <label className="text-xs font-medium text-slate-600">{t("Stock (blank = not tracked)")}</label>
               <input
                 type="number"
                 inputMode="numeric"
@@ -135,11 +137,11 @@ export default function ProductQuickAddModal({
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">Category (optional)</label>
+            <label className="text-xs font-medium text-slate-600">{t("Category (optional)")}</label>
             <input className={inputClass} value={category} onChange={(e) => setCategory(e.target.value)} />
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">Notes</label>
+            <label className="text-xs font-medium text-slate-600">{t("Notes")}</label>
             <textarea className={inputClass} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -149,14 +151,14 @@ export default function ProductQuickAddModal({
             onClick={() => onClose()}
             className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
           >
-            Cancel
+            {t("Cancel")}
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
             className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            {saving ? "Saving…" : "OK"}
+            {saving ? t("Saving…") : t("OK")}
           </button>
         </div>
       </div>

@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 import { Loader2, ShieldAlert, LogOut, AlertTriangle } from "lucide-react";
 import { useAppAuth } from "@/lib/useAppAuth";
 import ChatSignIn from "./ChatSignIn";
+import { useT } from "@/lib/useLang";
 
 /**
  * The single gate for both business pages and the chat UI. Children mount ONLY once authorized — so on
@@ -14,6 +15,7 @@ import ChatSignIn from "./ChatSignIn";
  */
 export default function RequireAuth({ children }: { children: ReactNode }) {
   const { authState, uid, email, deniedReason, signOut, loadError } = useAppAuth();
+  const t = useT();
 
   // RequireAuth sits directly inside <body className="flex">, alongside Sidebar/BottomNav (see layout.tsx), and
   // wraps <main className="flex-1 …"> — every branch below needs the SAME "flex-1 min-w-0" sizing that <main>
@@ -41,9 +43,9 @@ export default function RequireAuth({ children }: { children: ReactNode }) {
           <ShieldAlert size={22} />
         </div>
         <div>
-          <p className="text-base font-semibold text-slate-900">Không có quyền truy cập</p>
+          <p className="text-base font-semibold text-slate-900">{t("No access")}</p>
           <p className="mt-1.5 max-w-xs text-sm text-slate-500">
-            {deniedReason ?? "Tài khoản này chưa được cấp quyền truy cập cửa hàng."}
+            {deniedReason ? t(deniedReason) : t("This account has not been given access to the store yet.")}
           </p>
           {email && <p className="mt-1 text-xs text-slate-400">{email}</p>}
         </div>
@@ -51,7 +53,7 @@ export default function RequireAuth({ children }: { children: ReactNode }) {
           onClick={() => signOut()}
           className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
         >
-          <LogOut size={14} /> Đăng xuất / đổi tài khoản
+          <LogOut size={14} /> {t("Sign out / switch account")}
         </button>
       </div>
     );
@@ -65,12 +67,12 @@ export default function RequireAuth({ children }: { children: ReactNode }) {
       {loadError && (
         <div className="fixed inset-x-3 top-3 z-50 mx-auto flex max-w-md items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 shadow-lg print:hidden">
           <AlertTriangle size={18} className="shrink-0 text-red-600" />
-          <p className="flex-1 text-sm text-red-800">{loadError} Check your internet, then tap Reload.</p>
+          <p className="flex-1 text-sm text-red-800">{t(loadError)} {t("Check your internet, then tap Reload.")}</p>
           <button
             onClick={() => window.location.reload()}
             className="shrink-0 rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
           >
-            Reload
+            {t("Reload")}
           </button>
         </div>
       )}
