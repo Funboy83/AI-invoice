@@ -61,7 +61,7 @@ export const toolDefinitions = [
         defaultUnit: { type: "string", description: "e.g. thùng, kg, bao, chai. Defaults to 'unit'." },
         defaultPrice: { type: "number" },
         cost: { type: "number" },
-        quantity: { type: "number", description: "Starting stock count. Omit entirely to leave this product's stock untracked — invoicing will never touch it." },
+        quantity: { type: "number", description: "Starting stock count. Omit if unknown: the first sale or purchase starts counting from 0 (a sale before any purchase makes stock negative)." },
         category: { type: "string" },
         barcode: { type: "string" },
         notes: { type: "string" },

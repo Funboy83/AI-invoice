@@ -18,6 +18,7 @@ import {
   NotFoundError,
 } from "./businessStore";
 import { OperationConflictError, ValidationError } from "@/lib/domainErrors";
+import { createPurchase, createVendor } from "./purchaseStore";
 import type { InvoiceLineItem } from "@/lib/types";
 
 /**
@@ -344,11 +345,27 @@ describe("stock deduction — tracked (quantity set) vs untracked (quantity omit
     expect(inv.deductedQuantities).toEqual([{ productId: "p1", quantity: 10 }]);
   });
 
-  it("an untracked product (no quantity field) is never written to, and never appears in deductedQuantities", async () => {
+  it("a product not counted yet starts at 0, so a sale makes its stock negative", async () => {
     seedUntracked("p1");
     const inv = await createInvoice({ ...base, status: "unpaid", operationId: "untracked-1" });
-    expect(store.read("products/p1")).not.toHaveProperty("quantity");
-    expect(inv.deductedQuantities ?? []).toEqual([]);
+    expect(store.read("products/p1")).toMatchObject({ quantity: -10 });
+    expect(inv.deductedQuantities).toEqual([{ productId: "p1", quantity: 10 }]);
+  });
+
+  it("a purchase entered after the sale adds on top of negative stock (-10 then buy 25 = 15)", async () => {
+    seedUntracked("p1");
+    await createInvoice({ ...base, status: "unpaid", operationId: "neg-sale-1" });
+    const vendorId = (await createVendor({ name: "Costco" })).id;
+    await createPurchase({ vendorId, dateKey: "2026-10-20", items: [{ productId: "p1", quantity: 25, cost: 1 }], updateCost: false });
+    expect(store.read("products/p1")).toMatchObject({ quantity: 15 });
+  });
+
+  it("voiding the sale of a product that went negative puts the stock back", async () => {
+    seedTracked("p1", 0);
+    const inv = await createInvoice({ ...base, status: "unpaid", operationId: "neg-void-1" });
+    expect(store.read("products/p1")).toMatchObject({ quantity: -10 });
+    await updateInvoiceWithLog({ invoiceId: inv.id, status: "void", actor: "user", reason: "void", operationId: "neg-void-2" });
+    expect(store.read("products/p1")).toMatchObject({ quantity: 0 });
   });
 
   it("finalizing a draft invoice (draft -> unpaid) deducts stock exactly once", async () => {

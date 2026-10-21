@@ -114,7 +114,7 @@ export async function createProduct(input: {
   defaultUnit?: string;
   defaultPrice: number;
   cost?: number;
-  /** Omit to leave this product's stock untracked — invoicing will never read/adjust it. */
+  /** Omit if stock isn't known yet: it shows as not counted, and the first sale or purchase starts counting from 0. */
   quantity?: number;
   notes?: string;
   operationId?: string;
@@ -299,8 +299,8 @@ function hydrateInvoice(id: string, data: Record<string, unknown>): Invoice {
  * deduction) without ever double-deducting or losing a reversal, no matter how many times an invoice's items or
  * status change. `Invoice.deductedQuantities` is the durable snapshot of what THIS invoice currently holds against
  * stock — never recomputed from possibly-since-changed `items` — so an edit or void always diffs against what was
- * actually taken, not what the line items happen to say right now. Untracked products (quantity undefined/null on
- * the product doc) are skipped entirely: they never appear in a snapshot and are never written to.
+ * actually taken, not what the line items happen to say right now. A product not counted yet (quantity
+ * undefined/null on the product doc) is treated as 0, so a sale starts counting it (and may make it negative).
  *
  * Firestore transactions require every read before any write, so this is split in two: `readProductsForStock`
  * (pure read, called by the caller before ANY tx write in that transaction) and `computeStockSync` (pure compute,
@@ -343,13 +343,15 @@ function computeStockSync(
 
   for (const productId of productIds) {
     const info = productInfo.get(productId);
-    if (!info || info.quantity === null) continue; // deleted or untracked — never deducted, never restored
+    if (!info) continue; // deleted — never deducted, never restored
+    // A product not counted yet starts at 0, so selling it before its purchase is entered makes stock negative
+    // and the purchase later adds on top (-5 then buy 20 = 15).
     const afterQty = afterMap.get(productId) ?? 0;
     const beforeQty = beforeMap.get(productId) ?? 0;
     if (afterQty > 0) deductedQuantities.push({ productId, quantity: afterQty });
     const delta = afterQty - beforeQty; // positive: take more from stock; negative: restore
     if (delta === 0) continue;
-    const newQuantity = info.quantity - delta;
+    const newQuantity = (info.quantity ?? 0) - delta;
     writes.push({ ref: info.ref, quantity: newQuantity });
     if (newQuantity < 0) warnings.push(`${info.name}: stock is now ${newQuantity} (went below zero).`);
   }

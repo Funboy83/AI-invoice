@@ -13,7 +13,7 @@ interface FormState {
   defaultUnit: string;
   defaultPrice: string;
   cost: string;
-  /** Blank = stock untracked for this product; invoicing never reads/adjusts it. */
+  /** Blank = stock not counted yet; the first sale or purchase starts counting from 0. */
   quantity: string;
   /** Stock when the edit form opened: saving sends quantity only if the person changed it, so a sale made
    *  while the form was open is never overwritten with the older number. */
