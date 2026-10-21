@@ -1,5 +1,6 @@
 import { CheckCircle2, CircleDashed, Circle, FileText, Ban } from "lucide-react";
 import type { InvoiceStatus } from "@/lib/types";
+import { useT } from "@/lib/useLang";
 
 /** Easy-to-see payment tag: green Paid, amber Partial, red Unpaid (plus grey Draft / Void). */
 const STYLES: Record<InvoiceStatus, { label: string; cls: string; Icon: typeof Circle }> = {
@@ -11,11 +12,12 @@ const STYLES: Record<InvoiceStatus, { label: string; cls: string; Icon: typeof C
 };
 
 export default function PaymentStatusBadge({ status, size = "sm" }: { status: InvoiceStatus; size?: "sm" | "md" }) {
+  const t = useT();
   const s = STYLES[status] ?? STYLES.draft;
   const text = size === "md" ? "text-sm px-3 py-1 gap-1.5" : "text-xs px-2 py-0.5 gap-1";
   return (
     <span className={`inline-flex items-center rounded-full font-semibold ring-1 ring-inset ${text} ${s.cls}`}>
-      <s.Icon size={size === "md" ? 14 : 12} strokeWidth={2.5} /> {s.label}
+      <s.Icon size={size === "md" ? 14 : 12} strokeWidth={2.5} /> {t(s.label)}
     </span>
   );
 }

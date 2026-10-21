@@ -3,6 +3,7 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Plus, Search } from "lucide-react";
 import { findSimilar } from "@/lib/similarity";
+import { useT } from "@/lib/useLang";
 
 interface SearchComboboxProps<T> {
   items: T[];
@@ -34,8 +35,9 @@ export default function SearchCombobox<T>({
   onSelect,
   onCreateNew,
   placeholder,
-  createLabel = "Add new",
+  createLabel,
 }: SearchComboboxProps<T>) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   const results = useMemo(() => {
@@ -84,7 +86,7 @@ export default function SearchCombobox<T>({
               </span>
             </button>
           ))}
-          {results.length === 0 && <p className="px-3 py-3 text-xs text-slate-400">Không tìm thấy trong database.</p>}
+          {results.length === 0 && <p className="px-3 py-3 text-xs text-slate-400">{t("Not found in the database.")}</p>}
           {onCreateNew && value.trim() && !exactMatch && (
             <button
               type="button"
@@ -96,7 +98,7 @@ export default function SearchCombobox<T>({
               className="flex w-full items-center gap-2 border-t border-slate-100 px-3 py-2.5 text-left text-sm text-indigo-600 hover:bg-indigo-50"
             >
               <Plus size={14} />
-              {createLabel} &ldquo;{value.trim()}&rdquo;
+              {createLabel ?? t("Add new")} &ldquo;{value.trim()}&rdquo;
             </button>
           )}
         </div>

@@ -10,6 +10,7 @@ import { owedByCustomer } from "@/lib/customerInvoices";
 import { useAppAuth } from "@/lib/useAppAuth";
 import type { Customer, Invoice } from "@/lib/types";
 import { Plus, ChevronRight, Search } from "lucide-react";
+import { useT } from "@/lib/useLang";
 
 /** Accent- and case-insensitive, so "hoa" finds "Chị Hòa". */
 const normalizeSearch = (s: string) =>
@@ -27,6 +28,7 @@ export default function CustomersPage() {
 function CustomersPageContent() {
   const router = useRouter();
   const { reportListenerError } = useAppAuth();
+  const t = useT();
   const [allCustomers, setCustomers] = useState<Customer[]>([]);
   // Opened from a chat shortcut (/customers?id=…): show just that customer.
   const focusId = useSearchParams().get("id");
@@ -51,28 +53,28 @@ function CustomersPageContent() {
   const customers = (focusId ? allCustomers.filter((c) => c.id === focusId) : allCustomers).filter(
     (c) =>
       (!owingOnly || (owed.get(c.id) ?? 0) > 0) &&
-      (!q || [c.name, c.phone ?? "", ...c.aliases].some((t) => normalizeSearch(t).includes(q)))
+      (!q || [c.name, c.phone ?? "", ...c.aliases].some((s) => normalizeSearch(s).includes(q)))
   );
   const owingCount = allCustomers.filter((c) => (owed.get(c.id) ?? 0) > 0).length;
 
-  const emptyText = allCustomers.length === 0 ? "No customers yet." : "No customers match.";
+  const emptyText = allCustomers.length === 0 ? t("No customers yet.") : t("No customers match.");
 
   return (
     <div className="p-4 md:p-8 max-w-6xl mx-auto space-y-6 pb-24 md:pb-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Customers</h1>
-          <p className="text-sm text-slate-500 mt-1">Tap a customer to see their unpaid and paid invoices.</p>
+          <h1 className="text-2xl font-semibold text-slate-900">{t("Customers")}</h1>
+          <p className="text-sm text-slate-500 mt-1">{t("Tap a customer to see their unpaid and paid invoices.")}</p>
         </div>
         <button
           onClick={() => setModalOpen(true)}
           className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
         >
-          <Plus size={16} /> Add customer
+          <Plus size={16} /> {t("Add customer")}
         </button>
       </div>
 
-      {focusId && <ChatFilterBanner label="Đang xem khách hàng mở từ chat" clearHref="/customers" />}
+      {focusId && <ChatFilterBanner label={t("Showing the customer opened from chat")} clearHref="/customers" />}
 
       {!focusId && (
         <div className="flex flex-col sm:flex-row gap-2">
@@ -80,7 +82,7 @@ function CustomersPageContent() {
             <Search size={16} className="text-slate-400" />
             <input
               className="w-full py-2.5 text-base focus:outline-none"
-              placeholder="Search name, nickname or phone"
+              placeholder={t("Search name, nickname or phone")}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -90,13 +92,13 @@ function CustomersPageContent() {
               onClick={() => setOwingOnly(false)}
               className={`flex-1 rounded-md px-3 py-1.5 ${!owingOnly ? "bg-slate-900 text-white" : "text-slate-600"}`}
             >
-              All
+              {t("All")}
             </button>
             <button
               onClick={() => setOwingOnly(true)}
               className={`flex-1 whitespace-nowrap rounded-md px-3 py-1.5 ${owingOnly ? "bg-amber-500 text-white" : "text-slate-600"}`}
             >
-              Owes money ({owingCount})
+              {t("Owes money ({n})", { n: owingCount })}
             </button>
           </div>
         </div>
@@ -106,10 +108,10 @@ function CustomersPageContent() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
             <tr>
-              <th className="text-left px-5 py-3 font-medium">Name</th>
-              <th className="text-left px-5 py-3 font-medium">Aliases</th>
-              <th className="text-left px-5 py-3 font-medium">Phone</th>
-              <th className="text-right px-5 py-3 font-medium">Owes (USD)</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Name")}</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Aliases")}</th>
+              <th className="text-left px-5 py-3 font-medium">{t("Phone")}</th>
+              <th className="text-right px-5 py-3 font-medium">{t("Owes (USD)")}</th>
               <th className="px-5 py-3"></th>
             </tr>
           </thead>
@@ -158,7 +160,7 @@ function CustomersPageContent() {
           >
             <div className="min-w-0 flex-1">
               <p className="font-medium text-slate-900">{c.name}</p>
-              <p className="text-xs text-slate-500 mt-0.5">{c.phone || c.address || "No contact info"}</p>
+              <p className="text-xs text-slate-500 mt-0.5">{c.phone || c.address || t("No contact info")}</p>
               {c.aliases.length > 0 && (
                 <div className="flex flex-wrap gap-1 mt-2">
                   {c.aliases.slice(0, 4).map((a) => (
@@ -182,10 +184,11 @@ function CustomersPageContent() {
 }
 
 function OwedAmount({ amount }: { amount: number }) {
+  const t = useT();
   if (amount <= 0) return <span className="text-xs text-slate-400">—</span>;
   return (
     <span className="shrink-0 text-right">
-      <span className="block text-[10px] uppercase text-amber-600">Owes</span>
+      <span className="block text-[10px] uppercase text-amber-600">{t("Owes")}</span>
       <span className="font-semibold text-amber-700">${amount.toFixed(2)}</span>
     </span>
   );

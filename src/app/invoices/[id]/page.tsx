@@ -17,6 +17,7 @@ import DeliveryBadge from "@/components/DeliveryBadge";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 import { printPage } from "@/lib/printPage";
 import { printFileName } from "@/lib/printFileName";
+import { useT } from "@/lib/useLang";
 
 const COMPANY_NAME = process.env.NEXT_PUBLIC_COMPANY_NAME || "Ngan";
 
@@ -28,6 +29,7 @@ export default function InvoiceDetailPage() {
   const backParam = searchParams.get("back");
   const backHref = backParam && /^\/(customers|products)\/[^/?#]+$/.test(backParam) ? backParam : "/invoices";
   const { authedFetch, notifyPossibleRevocation, reportListenerError } = useAppAuth();
+  const t = useT();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [loading, setLoading] = useState(true);
   const [logs, setLogs] = useState<InvoiceLog[]>([]);
@@ -128,16 +130,16 @@ export default function InvoiceDetailPage() {
   async function saveEdit() {
     if (!invoice) return;
     if (!reason.trim()) {
-      setError("Please enter a reason for this edit — it will be saved to the audit log.");
+      setError(t("Please enter a reason for this edit — it will be saved to the audit log."));
       return;
     }
     if (draftItems.some((l) => !l.productId)) {
-      setError("Pick or add a product for every line item first.");
+      setError(t("Pick or add a product for every line item first."));
       return;
     }
     if (convertDelivery) {
       const unpriced = draftItems.filter((l) => l.price === 0).map((l) => l.productName);
-      if (unpriced.length && !window.confirm(`These items are still $0: ${unpriced.join(", ")}. Finalize anyway?`)) return;
+      if (unpriced.length && !window.confirm(t("These items are still $0: {items}. Finalize anyway?", { items: unpriced.join(", ") }))) return;
     }
     setSaving(true);
     setError("");
@@ -160,7 +162,7 @@ export default function InvoiceDetailPage() {
       setEditing(false);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save changes.");
+      setError(e instanceof Error ? t(e.message) : t("Failed to save changes."));
     } finally {
       setSaving(false);
     }
@@ -178,14 +180,14 @@ export default function InvoiceDetailPage() {
       setPayMethod("");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to record payment.");
+      setError(e instanceof Error ? t(e.message) : t("Failed to record payment."));
     } finally {
       setSaving(false);
     }
   }
 
-  if (loading) return <div className="p-8 text-slate-400 text-sm">Loading…</div>;
-  if (!invoice) return <div className="p-8 text-slate-400 text-sm">Invoice not found.</div>;
+  if (loading) return <div className="p-8 text-slate-400 text-sm">{t("Loading…")}</div>;
+  if (!invoice) return <div className="p-8 text-slate-400 text-sm">{t("Invoice not found.")}</div>;
 
   const draftSubtotal = draftItems.reduce((s, l) => s + l.lineTotal, 0);
   const draftTotal = draftSubtotal + (Number(draftShipping) || 0) - (Number(draftDiscount) || 0);
@@ -197,21 +199,21 @@ export default function InvoiceDetailPage() {
           onClick={() => router.push(backHref)}
           className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"
         >
-          <ArrowLeft size={15} /> Back
+          <ArrowLeft size={15} /> {t("Back")}
         </button>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             onClick={() => void printPage()}
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
-            <Printer size={14} /> Print / PDF
+            <Printer size={14} /> {t("Print / PDF")}
           </button>
           {!editing && isCommittedStatus(invoice.paymentStatus) && (
             <button
               onClick={() => router.push(`/custom-invoices/${invoice.id}`)}
               className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              <FileStack size={14} /> Custom Invoice
+              <FileStack size={14} /> {t("Custom Invoice")}
             </button>
           )}
           {!editing && (
@@ -223,7 +225,7 @@ export default function InvoiceDetailPage() {
               }}
               className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              <DollarSign size={14} /> Record payment
+              <DollarSign size={14} /> {t("Record payment")}
             </button>
           )}
           {!editing && (
@@ -231,7 +233,7 @@ export default function InvoiceDetailPage() {
               onClick={startEdit}
               className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              <Pencil size={14} /> Edit
+              <Pencil size={14} /> {t("Edit")}
             </button>
           )}
         </div>
@@ -240,7 +242,7 @@ export default function InvoiceDetailPage() {
       <div className="rounded-2xl border border-slate-200 bg-white p-6 print:hidden">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-xl font-semibold text-slate-900">Invoice #{invoice.invoiceNumber}</h1>
+            <h1 className="text-xl font-semibold text-slate-900">{t("Invoice #{n}", { n: invoice.invoiceNumber })}</h1>
             <p className="text-sm text-slate-500 mt-1">{invoice.customerName}</p>
             <p className="text-xs text-slate-400 mt-1">{new Date(invoice.date).toLocaleString()}</p>
           </div>
@@ -252,9 +254,9 @@ export default function InvoiceDetailPage() {
 
         {isOpenDelivery(invoice) && !editing && (
           <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50 p-3 text-sm text-violet-800 print:hidden">
-            <p className="font-medium">Delivery order — prices not final yet</p>
+            <p className="font-medium">{t("Delivery order — prices not final yet")}</p>
             <p className="mt-0.5 text-violet-700">
-              Items at $0 are allowed until you set the prices. Tap Edit, enter the prices and tick &quot;Chốt giá&quot; to make this the final invoice.
+              {t("Items at $0 are allowed until you set the prices. Tap Edit, enter the prices and tick \"Set final prices\" to make this the final invoice.")}
             </p>
           </div>
         )}
@@ -263,7 +265,7 @@ export default function InvoiceDetailPage() {
           <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 print:hidden">
             <AlertTriangle size={16} className="mt-0.5 shrink-0" />
             <div>
-              <p className="font-medium">Stock warning</p>
+              <p className="font-medium">{t("Stock warning")}</p>
               <ul className="mt-0.5 text-amber-700 list-disc list-inside">
                 {stockWarnings.map((w, i) => (
                   <li key={i}>{w}</li>
@@ -277,10 +279,10 @@ export default function InvoiceDetailPage() {
           <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 print:hidden">
             <AlertTriangle size={16} className="mt-0.5 shrink-0" />
             <div>
-              <p className="font-medium">Incomplete temp draft — not ready to finalize</p>
+              <p className="font-medium">{t("Incomplete temp draft — not ready to finalize")}</p>
               <p className="mt-0.5 text-amber-700">
-                Missing quantity and/or price for: {invoice.items.filter((it) => it.incomplete).map((it) => it.productName).join(", ")}.
-                Edit the item(s) to finish it, or set Status to Void below to delete this draft.
+                {t("Missing quantity and/or price for: {items}.", { items: invoice.items.filter((it) => it.incomplete).map((it) => it.productName).join(", ") })}{" "}
+                {t("Edit the item(s) to finish it, or set Status to Void below to delete this draft.")}
               </p>
             </div>
           </div>
@@ -288,7 +290,7 @@ export default function InvoiceDetailPage() {
 
         {invoice.originalOrderText && !editing && (
           <details className="mt-4 text-xs text-slate-500 print:hidden">
-            <summary className="cursor-pointer select-none">Original message</summary>
+            <summary className="cursor-pointer select-none">{t("Original message")}</summary>
             <pre className="whitespace-pre-wrap mt-1 bg-slate-50 rounded-lg p-3">{invoice.originalOrderText}</pre>
           </details>
         )}
@@ -299,11 +301,11 @@ export default function InvoiceDetailPage() {
               <table className="hidden md:table w-full text-sm">
                 <thead className="text-xs uppercase text-slate-400">
                   <tr>
-                    <th className="text-left py-2 font-medium">Item</th>
-                    <th className="text-right py-2 font-medium">Qty</th>
-                    <th className="text-left py-2 font-medium">Unit</th>
-                    <th className="text-right py-2 font-medium">Price (USD)</th>
-                    <th className="text-right py-2 font-medium">Total (USD)</th>
+                    <th className="text-left py-2 font-medium">{t("Item")}</th>
+                    <th className="text-right py-2 font-medium">{t("Qty")}</th>
+                    <th className="text-left py-2 font-medium">{t("Unit")}</th>
+                    <th className="text-right py-2 font-medium">{t("Price (USD)")}</th>
+                    <th className="text-right py-2 font-medium">{t("Total (USD)")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -313,9 +315,9 @@ export default function InvoiceDetailPage() {
                         {li.productName}
                         {li.incomplete && (
                           <span className="ml-1.5 inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 align-middle">
-                            missing {li.quantity <= 0 ? "qty" : ""}
+                            {t("missing")} {li.quantity <= 0 ? t("qty") : ""}
                             {li.quantity <= 0 && li.price <= 0 ? "/" : ""}
-                            {li.price <= 0 ? "price" : ""}
+                            {li.price <= 0 ? t("price") : ""}
                           </span>
                         )}
                       </td>
@@ -334,7 +336,7 @@ export default function InvoiceDetailPage() {
                     <div>
                       <p className="text-sm font-medium text-slate-900">
                         {li.productName}
-                        {li.incomplete && <span className="ml-1.5 text-[10px] font-medium text-amber-700">(incomplete)</span>}
+                        {li.incomplete && <span className="ml-1.5 text-[10px] font-medium text-amber-700">({t("incomplete")})</span>}
                       </p>
                       <p className="text-xs text-slate-500">
                         {li.quantity} {li.unit} × ${li.price.toFixed(2)}
@@ -348,9 +350,9 @@ export default function InvoiceDetailPage() {
           ) : (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-slate-600 uppercase">Line items</p>
+                <p className="text-xs font-medium text-slate-600 uppercase">{t("Line items")}</p>
                 <button onClick={addLine} className="flex items-center gap-1 text-xs font-medium text-indigo-600 hover:underline">
-                  <Plus size={13} /> Add item
+                  <Plus size={13} /> {t("Add item")}
                 </button>
               </div>
               {draftItems.map((line, idx) => (
@@ -366,8 +368,8 @@ export default function InvoiceDetailPage() {
                       onQueryChange={(q) => updateLine(idx, { productId: "", productName: q })}
                       onSelect={(p) => updateLine(idx, { productId: p.id, productName: p.name, price: p.defaultPrice, unit: p.defaultUnit })}
                       onCreateNew={(name) => setQuickAddProduct({ idx, name })}
-                      placeholder="Tìm hoặc thêm sản phẩm..."
-                      createLabel="Thêm sản phẩm mới"
+                      placeholder={t("Find or add a product...")}
+                      createLabel={t("Add new product")}
                     />
                   </div>
                   <input
@@ -397,31 +399,31 @@ export default function InvoiceDetailPage() {
         <div className="mt-4 flex justify-end">
           <div className="w-56 space-y-1 text-sm">
             <div className="flex justify-between text-slate-500">
-              <span>Subtotal</span>
+              <span>{t("Subtotal")}</span>
               <span>${(editing ? draftSubtotal : invoice.subtotal).toFixed(2)}</span>
             </div>
             <div className="flex justify-between text-slate-500">
-              <span>Shipping</span>
+              <span>{t("Shipping")}</span>
               <span>${(editing ? Number(draftShipping) || 0 : invoice.shipping).toFixed(2)}</span>
             </div>
             {(editing ? Number(draftDiscount) || 0 : invoice.discount) > 0 && (
               <div className="flex justify-between text-slate-500">
-                <span>Discount</span>
+                <span>{t("Discount")}</span>
                 <span>-${(editing ? Number(draftDiscount) || 0 : invoice.discount).toFixed(2)}</span>
               </div>
             )}
             <div className="flex justify-between font-semibold text-slate-900 text-base pt-1 border-t border-slate-100">
-              <span>Total</span>
+              <span>{t("Total")}</span>
               <span>${(editing ? draftTotal : invoice.total).toFixed(2)}</span>
             </div>
             {!editing && (
               <>
                 <div className="flex justify-between text-slate-500">
-                  <span>Paid</span>
+                  <span>{t("Paid")}</span>
                   <span>${invoice.amountPaid.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between font-medium text-slate-900">
-                  <span>Balance</span>
+                  <span>{t("Balance")}</span>
                   <span>${invoice.balance.toFixed(2)}</span>
                 </div>
               </>
@@ -433,7 +435,7 @@ export default function InvoiceDetailPage() {
           <div className="mt-4 space-y-3 border-t border-slate-100 pt-4 print:hidden">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-slate-600">Shipping</label>
+                <label className="text-xs font-medium text-slate-600">{t("Shipping")}</label>
                 <input
                   type="number"
                   step="0.01"
@@ -443,7 +445,7 @@ export default function InvoiceDetailPage() {
                 />
               </div>
               <div>
-                <label className="text-xs font-medium text-slate-600">Discount</label>
+                <label className="text-xs font-medium text-slate-600">{t("Discount")}</label>
                 <input
                   type="number"
                   step="0.01"
@@ -454,21 +456,21 @@ export default function InvoiceDetailPage() {
               </div>
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Status</label>
+              <label className="text-xs font-medium text-slate-600">{t("Status")}</label>
               <select
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-base"
                 value={draftStatus}
                 onChange={(e) => setDraftStatus(e.target.value as InvoiceStatus)}
               >
-                <option value="draft">Draft</option>
-                <option value="unpaid">Unpaid</option>
-                <option value="partial">Partial</option>
-                <option value="paid">Paid</option>
-                <option value="void">Void</option>
+                <option value="draft">{t("Draft")}</option>
+                <option value="unpaid">{t("Unpaid")}</option>
+                <option value="partial">{t("Partial")}</option>
+                <option value="paid">{t("Paid")}</option>
+                <option value="void">{t("Void")}</option>
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Notes</label>
+              <label className="text-xs font-medium text-slate-600">{t("Notes")}</label>
               <textarea
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-base"
                 rows={2}
@@ -477,12 +479,12 @@ export default function InvoiceDetailPage() {
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Reason for edit (required, saved to audit log)</label>
+              <label className="text-xs font-medium text-slate-600">{t("Reason for edit (required, saved to audit log)")}</label>
               <input
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-base"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. Customer requested quantity change"
+                placeholder={t("e.g. Customer requested quantity change")}
               />
             </div>
             {isOpenDelivery(invoice) && (
@@ -494,22 +496,22 @@ export default function InvoiceDetailPage() {
                   onChange={(e) => setConvertDelivery(e.target.checked)}
                 />
                 <span>
-                  <span className="font-medium">Chốt giá — these prices are final</span>
-                  <span className="block text-xs text-violet-700">The delivery becomes the final invoice (same number, still unpaid).</span>
+                  <span className="font-medium">{t("Set final prices — these prices are final")}</span>
+                  <span className="block text-xs text-violet-700">{t("The delivery becomes the final invoice (same number, still unpaid).")}</span>
                 </span>
               </label>
             )}
             {error && <p className="text-sm text-red-600">{error}</p>}
             <div className="flex justify-end gap-2">
               <button onClick={() => setEditing(false)} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100">
-                Cancel
+                {t("Cancel")}
               </button>
               <button
                 onClick={saveEdit}
                 disabled={saving}
                 className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                {saving ? "Saving…" : "Save changes"}
+                {saving ? t("Saving…") : t("Save changes")}
               </button>
             </div>
           </div>
@@ -522,34 +524,34 @@ export default function InvoiceDetailPage() {
       <div className="hidden print:block text-black" data-print-root data-print-name={printFileName(invoice.customerName, toDateKey(invoice.date))}>
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">INVOICE</h1>
+            <h1 className="text-2xl font-bold tracking-tight">{t("INVOICE")}</h1>
             <p className="text-sm font-semibold mt-1">{COMPANY_NAME}</p>
           </div>
           <div className="text-right text-xs leading-5">
             <p>
-              <span className="font-semibold">Invoice No:</span> {invoice.invoiceNumber}
+              <span className="font-semibold">{t("Invoice No:")}</span> {invoice.invoiceNumber}
             </p>
             <p>
-              <span className="font-semibold">Date:</span> {new Date(invoice.date).toISOString().slice(0, 10)}
+              <span className="font-semibold">{t("Date:")}</span> {new Date(invoice.date).toISOString().slice(0, 10)}
             </p>
           </div>
         </div>
         <hr className="my-3 border-black" />
 
         <div className="mt-2">
-          <p className="text-xs font-semibold">Bill To:</p>
+          <p className="text-xs font-semibold">{t("Bill To:")}</p>
           <p className="text-sm">{invoice.customerName}</p>
         </div>
 
         <table className="w-full mt-4 text-xs border-collapse border border-black">
           <thead>
             <tr>
-              <th className="border border-black py-1 px-1 w-10">NO</th>
-              <th className="border border-black py-1 px-2 text-left">DESCRIPTION</th>
-              <th className="border border-black py-1 px-1 w-14">QTY</th>
-              <th className="border border-black py-1 px-1 w-16">UNIT</th>
-              <th className="border border-black py-1 px-2 w-24">UNIT PRICE</th>
-              <th className="border border-black py-1 px-2 w-24">AMOUNT</th>
+              <th className="border border-black py-1 px-1 w-10">{t("NO")}</th>
+              <th className="border border-black py-1 px-2 text-left">{t("DESCRIPTION")}</th>
+              <th className="border border-black py-1 px-1 w-14">{t("QTY")}</th>
+              <th className="border border-black py-1 px-1 w-16">{t("UNIT")}</th>
+              <th className="border border-black py-1 px-2 w-24">{t("UNIT PRICE")}</th>
+              <th className="border border-black py-1 px-2 w-24">{t("AMOUNT")}</th>
             </tr>
           </thead>
           <tbody>
@@ -568,26 +570,26 @@ export default function InvoiceDetailPage() {
 
         <div className="flex justify-between items-start mt-6">
           <div className="text-xs max-w-xs">
-            <p className="font-semibold">Notes:</p>
-            <p className="mt-0.5">{invoice.notes || "Thank you for your business! Payment is due within 30 days."}</p>
+            <p className="font-semibold">{t("Notes:")}</p>
+            <p className="mt-0.5">{invoice.notes || t("Thank you for your business! Payment is due within 30 days.")}</p>
           </div>
           <div className="border-2 border-black px-4 py-2">
-            <p className="font-bold text-sm">TOTAL: ${invoice.total.toFixed(2)}</p>
+            <p className="font-bold text-sm">{t("TOTAL:")} ${invoice.total.toFixed(2)}</p>
           </div>
         </div>
       </div>
 
       {payments.length > 0 && (
         <div className="rounded-2xl border border-slate-200 bg-white p-6 print:hidden">
-          <h2 className="text-sm font-semibold text-slate-900 mb-3">Payments</h2>
+          <h2 className="text-sm font-semibold text-slate-900 mb-3">{t("Payments")}</h2>
           <div className="space-y-2">
             {payments.map((p) => (
               <div key={p.id} className="flex justify-between text-sm">
                 <span className="text-slate-600">
-                  {new Date(p.createdAt).toLocaleDateString()} {p.method ? `· ${p.method}` : ""}
-                  {p.kind === "adjustment" && " · adjustment"}
-                  {p.cancelled && <span className="ml-1 font-medium text-red-600">· cancelled</span>}
-                  {!p.cancelled && (p.history?.length ?? 0) > 0 && <span className="ml-1 text-indigo-600">· edited</span>}
+                  {new Date(p.createdAt).toLocaleDateString()} {p.method ? `· ${t(p.method)}` : ""}
+                  {p.kind === "adjustment" && ` · ${t("adjustment")}`}
+                  {p.cancelled && <span className="ml-1 font-medium text-red-600">· {t("cancelled")}</span>}
+                  {!p.cancelled && (p.history?.length ?? 0) > 0 && <span className="ml-1 text-indigo-600">· {t("edited")}</span>}
                 </span>
                 <span className={`font-medium ${p.cancelled ? "text-slate-400 line-through" : "text-slate-900"}`}>${p.amount.toFixed(2)}</span>
               </div>
@@ -597,43 +599,43 @@ export default function InvoiceDetailPage() {
       )}
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 print:hidden">
-        <h2 className="text-sm font-semibold text-slate-900 mb-3">Audit log</h2>
+        <h2 className="text-sm font-semibold text-slate-900 mb-3">{t("Audit log")}</h2>
         <div className="space-y-3">
           {logs.map((log) => (
             <div key={log.id} className="flex gap-3 text-sm">
               <div className="w-1.5 h-1.5 mt-2 rounded-full bg-indigo-400 shrink-0" />
               <div>
                 <p className="text-slate-700">
-                  {log.message} <span className="text-xs text-slate-400 capitalize">— {log.actor}</span>
+                  {log.message} <span className="text-xs text-slate-400 capitalize">— {t(log.actor)}</span>
                 </p>
                 <p className="text-xs text-slate-400">{new Date(log.timestamp).toLocaleString()}</p>
               </div>
             </div>
           ))}
-          {logs.length === 0 && <p className="text-sm text-slate-400">No log entries yet.</p>}
+          {logs.length === 0 && <p className="text-sm text-slate-400">{t("No log entries yet.")}</p>}
         </div>
       </div>
 
       {payOpen && (
         <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30">
           <div className="w-full md:max-w-sm rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl">
-            <h2 className="text-lg font-semibold text-slate-900 mb-1">Record payment</h2>
+            <h2 className="text-lg font-semibold text-slate-900 mb-1">{t("Record payment")}</h2>
             <p className="text-xs text-slate-500 mb-4">
               {invoice.customerId ? (
                 <>
-                  This pays only this invoice. To pay the oldest invoices first, use{" "}
+                  {t("This pays only this invoice. To pay the oldest invoices first, use")}{" "}
                   <Link href={`/customers/${invoice.customerId}`} className="font-medium text-indigo-600">
-                    Record payment on the customer page
+                    {t("Record payment on the customer page")}
                   </Link>
                   .
                 </>
               ) : (
-                "This pays only this invoice."
+                t("This pays only this invoice.")
               )}
             </p>
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-medium text-slate-600">Amount (balance: ${invoice.balance.toFixed(2)})</label>
+                <label className="text-xs font-medium text-slate-600">{t("Amount (balance: ${amount})", { amount: invoice.balance.toFixed(2) })}</label>
                 <input
                   type="number"
                   step="0.01"
@@ -643,26 +645,26 @@ export default function InvoiceDetailPage() {
                 />
               </div>
               <div>
-                <label className="text-xs font-medium text-slate-600">Method (optional)</label>
+                <label className="text-xs font-medium text-slate-600">{t("Method (optional)")}</label>
                 <input
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base"
                   value={payMethod}
                   onChange={(e) => setPayMethod(e.target.value)}
-                  placeholder="cash, zelle, venmo…"
+                  placeholder={t("cash, zelle, venmo…")}
                 />
               </div>
               {error && <p className="text-sm text-red-600">{error}</p>}
             </div>
             <div className="mt-5 flex justify-end gap-2">
               <button onClick={() => setPayOpen(false)} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100">
-                Cancel
+                {t("Cancel")}
               </button>
               <button
                 onClick={submitPayment}
                 disabled={saving}
                 className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                {saving ? "Saving…" : "Record"}
+                {saving ? t("Saving…") : t("Record")}
               </button>
             </div>
           </div>

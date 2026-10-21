@@ -5,6 +5,7 @@ import { createCustomerApi, newOperationId, updateCustomerApi } from "@/lib/busi
 import { useAppAuth } from "@/lib/useAppAuth";
 import type { Customer } from "@/lib/types";
 import { X } from "lucide-react";
+import { useT } from "@/lib/useLang";
 
 interface FormState {
   id?: string;
@@ -66,6 +67,7 @@ export default function CustomerFormModal({
   onClose: () => void;
 }) {
   const { authedFetch } = useAppAuth();
+  const t = useT();
   const [form, setForm] = useState<FormState>(() =>
     customer ? formFor(customer) : { ...emptyForm, name: initialName ?? "" }
   );
@@ -74,7 +76,7 @@ export default function CustomerFormModal({
   const [operationId] = useState(newOperationId);
 
   async function handleSave() {
-    if (!form.name.trim()) return setError("Name is required.");
+    if (!form.name.trim()) return setError(t("Name is required."));
     setSaving(true);
     setError("");
     const aliases = form.aliases
@@ -100,7 +102,7 @@ export default function CustomerFormModal({
       }
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save customer.");
+      setError(e instanceof Error ? t(e.message) : t("Failed to save customer."));
     } finally {
       setSaving(false);
     }
@@ -110,14 +112,14 @@ export default function CustomerFormModal({
     <div className="fixed inset-0 z-[60] flex items-end md:items-center justify-center bg-black/30">
       <div className="w-full md:max-w-md rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-slate-900">{form.id ? "Edit customer" : "Add customer"}</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{form.id ? t("Edit customer") : t("Add customer")}</h2>
           <button onClick={() => onClose()} className="text-slate-400 hover:text-slate-700">
             <X size={18} />
           </button>
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-xs font-medium text-slate-600">Name</label>
+            <label className="text-xs font-medium text-slate-600">{t("Name")}</label>
             <input
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={form.name}
@@ -126,7 +128,7 @@ export default function CustomerFormModal({
           </div>
           {!form.id && (
             <div>
-              <label className="text-xs font-medium text-slate-600">Aliases (comma-separated, e.g. Hoa Lee, chị Hoa Lee)</label>
+              <label className="text-xs font-medium text-slate-600">{t("Aliases (comma-separated, e.g. Hoa Lee, chị Hoa Lee)")}</label>
               <input
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={form.aliases}
@@ -136,7 +138,7 @@ export default function CustomerFormModal({
           )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-600">Contact name</label>
+              <label className="text-xs font-medium text-slate-600">{t("Contact name")}</label>
               <input
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={form.contactName}
@@ -144,7 +146,7 @@ export default function CustomerFormModal({
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Phone</label>
+              <label className="text-xs font-medium text-slate-600">{t("Phone")}</label>
               <input
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={form.phone}
@@ -153,7 +155,7 @@ export default function CustomerFormModal({
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">Email</label>
+            <label className="text-xs font-medium text-slate-600">{t("Email")}</label>
             <input
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={form.email}
@@ -161,7 +163,7 @@ export default function CustomerFormModal({
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">Address</label>
+            <label className="text-xs font-medium text-slate-600">{t("Address")}</label>
             <input
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={form.address}
@@ -169,7 +171,7 @@ export default function CustomerFormModal({
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">Shipping address (if different)</label>
+            <label className="text-xs font-medium text-slate-600">{t("Shipping address (if different)")}</label>
             <input
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={form.shippingAddress}
@@ -177,7 +179,7 @@ export default function CustomerFormModal({
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">Default shipping fee (optional)</label>
+            <label className="text-xs font-medium text-slate-600">{t("Default shipping fee (optional)")}</label>
             <input
               type="number"
               step="0.01"
@@ -187,7 +189,7 @@ export default function CustomerFormModal({
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">Notes</label>
+            <label className="text-xs font-medium text-slate-600">{t("Notes")}</label>
             <textarea
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
               rows={2}
@@ -202,14 +204,14 @@ export default function CustomerFormModal({
             onClick={() => onClose()}
             className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
           >
-            Cancel
+            {t("Cancel")}
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
             className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            {saving ? "Saving…" : onCreated ? "OK" : "Save"}
+            {saving ? t("Saving…") : onCreated ? t("OK") : t("Save")}
           </button>
         </div>
       </div>

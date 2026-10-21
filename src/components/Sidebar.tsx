@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LayoutDashboard, FileText, FileStack, Boxes, Users, ShoppingCart } from "lucide-react";
 import clsx from "clsx";
+import { useT } from "@/lib/useLang";
+import LanguageSwitch from "./LanguageSwitch";
 
 // Each section has its own color so it is easy to tell apart at a glance.
 const links = [
@@ -17,6 +19,7 @@ const links = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const t = useT();
 
   return (
     <aside className="hidden md:flex print:hidden w-56 shrink-0 border-r border-slate-200 bg-white flex-col">
@@ -26,7 +29,7 @@ export default function Sidebar() {
         </div>
         <div>
           <p className="text-lg font-semibold text-slate-900 leading-tight">Invoice AI</p>
-          <p className="text-xs text-slate-500">Virtual secretary</p>
+          <p className="text-xs text-slate-500">{t("Virtual secretary")}</p>
         </div>
       </div>
       <nav className="flex-1 px-3 py-4 space-y-1">
@@ -42,13 +45,14 @@ export default function Sidebar() {
               )}
             >
               <Icon size={17} className={iconColor} />
-              {label}
+              {t(label)}
             </Link>
           );
         })}
       </nav>
-      <div className="px-5 py-4 text-[11px] text-slate-400 border-t border-slate-200">
-        Data synced with Firestore
+      <div className="px-5 py-4 text-[11px] text-slate-400 border-t border-slate-200 flex items-center justify-between gap-2">
+        <span>{t("Data synced with Firestore")}</span>
+        <LanguageSwitch />
       </div>
     </aside>
   );

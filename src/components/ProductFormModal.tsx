@@ -5,6 +5,7 @@ import { createProductApi, newOperationId, updateProductApi } from "@/lib/busine
 import { useAppAuth } from "@/lib/useAppAuth";
 import type { Product } from "@/lib/types";
 import { X } from "lucide-react";
+import { useT } from "@/lib/useLang";
 
 interface FormState {
   id?: string;
@@ -62,6 +63,7 @@ function formFor(p: Product): FormState {
  */
 export default function ProductFormModal({ product, onClose }: { product?: Product; onClose: () => void }) {
   const { authedFetch } = useAppAuth();
+  const t = useT();
   const [form, setForm] = useState<FormState>(() => (product ? formFor(product) : emptyForm));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -111,7 +113,7 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
       }
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to save product.");
+      setError(e instanceof Error ? t(e.message) : t("Failed to save product."));
     } finally {
       setSaving(false);
     }
@@ -121,14 +123,14 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/30">
       <div className="w-full md:max-w-md rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-slate-900">{form.id ? "Edit product" : "Add product"}</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{form.id ? t("Edit product") : t("Add product")}</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700">
             <X size={18} />
           </button>
         </div>
         <div className="space-y-3">
           <div>
-            <label className="text-xs font-medium text-slate-600">Name</label>
+            <label className="text-xs font-medium text-slate-600">{t("Name")}</label>
             <input
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={form.name}
@@ -136,7 +138,7 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">Aliases (comma-separated, e.g. bo huc, BH, red bull thai)</label>
+            <label className="text-xs font-medium text-slate-600">{t("Aliases (comma-separated, e.g. bo huc, BH, red bull thai)")}</label>
             <input
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={form.aliases}
@@ -145,7 +147,7 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-600">Price</label>
+              <label className="text-xs font-medium text-slate-600">{t("Price")}</label>
               <input
                 type="number"
                 step="0.01"
@@ -155,7 +157,7 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Unit</label>
+              <label className="text-xs font-medium text-slate-600">{t("Unit")}</label>
               <input
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={form.defaultUnit}
@@ -165,7 +167,7 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-slate-600">Cost (optional)</label>
+              <label className="text-xs font-medium text-slate-600">{t("Cost (optional)")}</label>
               <input
                 type="number"
                 step="0.01"
@@ -175,7 +177,7 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-slate-600">Category (optional)</label>
+              <label className="text-xs font-medium text-slate-600">{t("Category (optional)")}</label>
               <input
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={form.category}
@@ -184,22 +186,22 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-slate-600">Stock quantity (leave blank to not track stock)</label>
+            <label className="text-xs font-medium text-slate-600">{t("Stock quantity (leave blank to not track stock)")}</label>
             <input
               type="number"
               step="1"
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
               value={form.quantity}
               onChange={(e) => setForm({ ...form, quantity: e.target.value })}
-              placeholder="Untracked"
+              placeholder={t("Untracked")}
             />
             <p className="mt-1 text-[11px] text-slate-400">
-              When set, stock is automatically deducted when this product is on a finalized invoice, and restored if the invoice is voided or the line is removed.
+              {t("When set, stock is automatically deducted when this product is on a finalized invoice, and restored if the invoice is voided or the line is removed.")}
             </p>
           </div>
           {!form.id && (
             <div>
-              <label className="text-xs font-medium text-slate-600">Barcode (optional)</label>
+              <label className="text-xs font-medium text-slate-600">{t("Barcode (optional)")}</label>
               <input
                 className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 value={form.barcode}
@@ -208,7 +210,7 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
             </div>
           )}
           <div>
-            <label className="text-xs font-medium text-slate-600">Notes (optional)</label>
+            <label className="text-xs font-medium text-slate-600">{t("Notes (optional)")}</label>
             <textarea
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base focus:outline-none focus:ring-2 focus:ring-indigo-500"
               rows={2}
@@ -223,7 +225,7 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
                 checked={form.active}
                 onChange={(e) => setForm({ ...form, active: e.target.checked })}
               />
-              Active
+              {t("Active")}
             </label>
           )}
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -233,14 +235,14 @@ export default function ProductFormModal({ product, onClose }: { product?: Produ
             onClick={onClose}
             className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
           >
-            Cancel
+            {t("Cancel")}
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
             className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            {saving ? "Saving…" : "Save"}
+            {saving ? t("Saving…") : t("Save")}
           </button>
         </div>
       </div>

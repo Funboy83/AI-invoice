@@ -1,10 +1,13 @@
 import { money } from "@/components/customInvoice/shared";
 import { statementOwed, statementTotals } from "@/lib/customerInvoices";
 import type { Customer, Invoice } from "@/lib/types";
+import { useT } from "@/lib/useLang";
 
 const COMPANY_NAME = process.env.NEXT_PUBLIC_COMPANY_NAME || "Ngan";
 
 const fmtDate = (ms: number) => new Date(ms).toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
+
+const tagLabels: Record<string, string> = { paid: "Paid", partial: "Partial", unpaid: "Unpaid" };
 
 const tagStyles: Record<string, string> = {
   paid: "text-[#166534] border-[#166534]",
@@ -20,6 +23,7 @@ const cell = "border border-black px-1 py-px whitespace-nowrap";
  * notes/print-samples mockup; header styled like the Custom Invoice "Professional" print. Display only.
  */
 export default function StatementPrint({ customer, invoices, printedAt }: { customer: Customer; invoices: Invoice[]; printedAt: number }) {
+  const t = useT();
   const totals = statementTotals(invoices);
   const dates = invoices.map((i) => i.date);
 
@@ -27,7 +31,7 @@ export default function StatementPrint({ customer, invoices, printedAt }: { cust
     <div className="text-black font-[Arial,Helvetica,sans-serif] text-[11px] leading-snug">
       <div className="flex items-start justify-between">
         <h1 className="text-[34px] leading-none text-[#1f3a8a] underline decoration-2 underline-offset-4 [font-family:Impact,'Arial_Narrow',sans-serif] [font-stretch:condensed]">
-          STATEMENT
+          {t("STATEMENT")}
         </h1>
         <p className="text-right text-[13px] font-bold underline uppercase">{COMPANY_NAME}</p>
       </div>
@@ -35,46 +39,46 @@ export default function StatementPrint({ customer, invoices, printedAt }: { cust
 
       <div className="grid grid-cols-[1.3fr_1fr] gap-2">
         <div>
-          <p className="font-bold">Customer:</p>
+          <p className="font-bold">{t("Customer:")}</p>
           <p>{customer.name}</p>
           {customer.address && <p className="whitespace-pre-line">{customer.address}</p>}
-          {customer.phone && <p>Tel: {customer.phone}</p>}
+          {customer.phone && <p>{t("Tel:")} {customer.phone}</p>}
         </div>
         <div className="text-right">
           {dates.length > 0 && (
             <p>
-              <span className="font-bold">Period:</span> {fmtDate(Math.min(...dates))} – {fmtDate(Math.max(...dates))}
+              <span className="font-bold">{t("Period:")}</span> {fmtDate(Math.min(...dates))} – {fmtDate(Math.max(...dates))}
             </p>
           )}
           <p>
-            <span className="font-bold">Printed:</span> {fmtDate(printedAt)}
+            <span className="font-bold">{t("Printed:")}</span> {fmtDate(printedAt)}
           </p>
           <p>
-            <span className="font-bold">Invoices:</span> {totals.count}
+            <span className="font-bold">{t("Invoices:")}</span> {totals.count}
           </p>
         </div>
       </div>
 
-      {invoices.length === 0 && <p className="mt-6 text-center text-slate-500">No invoices picked.</p>}
+      {invoices.length === 0 && <p className="mt-6 text-center text-slate-500">{t("No invoices picked.")}</p>}
 
       {invoices.map((inv) => (
         <section key={inv.id} className="mt-2 break-inside-avoid">
           <div className="flex items-center gap-4 border border-b-0 border-black bg-[#eef2fb] px-1.5 py-0.5">
-            <span className="font-bold">Invoice {inv.invoiceNumber}</span>
-            <span>Date: {fmtDate(inv.date)}</span>
+            <span className="font-bold">{t("Invoice {n}", { n: inv.invoiceNumber })}</span>
+            <span>{t("Date:")} {fmtDate(inv.date)}</span>
             <span className={`ml-auto rounded-full border px-1.5 text-[9.5px] font-bold capitalize ${tagStyles[inv.paymentStatus] ?? ""}`}>
-              {inv.paymentStatus}
+              {t(tagLabels[inv.paymentStatus] ?? inv.paymentStatus)}
             </span>
           </div>
           <table className="w-full table-fixed border-collapse text-[8px] leading-tight">
             <thead>
               <tr className="bg-[#fafafa] font-bold">
                 <th className={`${cell} w-[22px]`}>#</th>
-                <th className={`${cell} text-left`}>Product</th>
-                <th className={`${cell} w-[38px]`}>Qty</th>
-                <th className={`${cell} w-[44px]`}>Unit</th>
-                <th className={`${cell} w-[62px] text-right`}>Price</th>
-                <th className={`${cell} w-[72px] text-right`}>Amount</th>
+                <th className={`${cell} text-left`}>{t("Product")}</th>
+                <th className={`${cell} w-[38px]`}>{t("Qty")}</th>
+                <th className={`${cell} w-[44px]`}>{t("Unit")}</th>
+                <th className={`${cell} w-[62px] text-right`}>{t("Price")}</th>
+                <th className={`${cell} w-[72px] text-right`}>{t("Amount")}</th>
               </tr>
             </thead>
             <tbody>
@@ -91,14 +95,14 @@ export default function StatementPrint({ customer, invoices, printedAt }: { cust
             </tbody>
           </table>
           <div className="flex flex-wrap justify-end gap-x-5 border border-t-0 border-black px-1.5 py-px text-[10px]">
-            {inv.shipping > 0 && <span>Shipping {money(inv.shipping)}</span>}
-            {inv.discount > 0 && <span>Discount {money(inv.discount)}</span>}
+            {inv.shipping > 0 && <span>{t("Shipping")} {money(inv.shipping)}</span>}
+            {inv.discount > 0 && <span>{t("Discount")} {money(inv.discount)}</span>}
             <span>
-              Invoice total <b>{money(inv.total)}</b>
+              {t("Invoice total")} <b>{money(inv.total)}</b>
             </span>
-            <span>Paid {money(inv.amountPaid)}</span>
+            <span>{t("Paid")} {money(inv.amountPaid)}</span>
             <span>
-              Still owed <b>{money(statementOwed(inv))}</b>
+              {t("Still owed")} <b>{money(statementOwed(inv))}</b>
             </span>
           </div>
         </section>
@@ -107,20 +111,20 @@ export default function StatementPrint({ customer, invoices, printedAt }: { cust
       <div className="mt-3.5 ml-auto w-[290px] border-t-2 border-black pt-1.5 break-inside-avoid">
         <div className="flex justify-between py-0.5">
           <span>
-            Total of {totals.count} invoice{totals.count === 1 ? "" : "s"}
+            {t(totals.count === 1 ? "Total of {n} invoice" : "Total of {n} invoices", { n: totals.count })}
           </span>
           <b>{money(totals.totalBilled)}</b>
         </div>
         <div className="flex justify-between py-0.5">
-          <span>Total paid</span>
+          <span>{t("Total paid")}</span>
           <span>{money(totals.totalPaid)}</span>
         </div>
         <div className="mt-1 flex justify-between border-t border-black pt-1 text-[14px] font-bold text-[#991b1b]">
-          <span>TOTAL STILL OWED</span>
+          <span>{t("TOTAL STILL OWED")}</span>
           <span>{money(totals.totalOwed)}</span>
         </div>
       </div>
-      <p className="mt-3.5 text-[8.5px] uppercase">Thank you for your business. Please pay the oldest invoice first.</p>
+      <p className="mt-3.5 text-[8.5px] uppercase">{t("Thank you for your business. Please pay the oldest invoice first.")}</p>
     </div>
   );
 }

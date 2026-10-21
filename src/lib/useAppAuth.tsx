@@ -90,12 +90,12 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
           setDenied(null);
         } else {
           setSession(null);
-          setDenied({ uid, reason: data.error ?? "Tài khoản này không có quyền truy cập." });
+          setDenied({ uid, reason: data.error ?? "This account does not have access." });
         }
       } catch {
         if (!cancelled) {
           setSession(null);
-          setDenied({ uid, reason: "Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại." });
+          setDenied({ uid, reason: "Couldn't reach the server. Check your connection and try again." });
         }
       }
     })();
@@ -130,9 +130,8 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
         recheck();
         return;
       }
-      const code = typeof err === "object" && err !== null && "code" in err ? String((err as { code?: unknown }).code) : "";
       console.error("Firestore listener failed", err);
-      setLoadError(code ? `Couldn't load your data (${code}).` : "Couldn't load your data.");
+      setLoadError("Couldn't load your data.");
     },
     [recheck],
   );
@@ -143,9 +142,9 @@ export function AppAuthProvider({ children }: { children: ReactNode }) {
       return null;
     } catch (err) {
       const code = (err as { code?: string }).code ?? "";
-      if (code.includes("network")) return "Không có mạng — kiểm tra kết nối rồi thử lại.";
-      if (code.includes("too-many-requests")) return "Thử quá nhiều lần — đợi một lúc rồi thử lại.";
-      return "Email hoặc mật khẩu chưa đúng.";
+      if (code.includes("network")) return "No internet — check your connection and try again.";
+      if (code.includes("too-many-requests")) return "Too many tries — wait a while and try again.";
+      return "Wrong email or password.";
     }
   }, []);
 

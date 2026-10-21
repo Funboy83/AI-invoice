@@ -8,6 +8,7 @@ import { useAppAuth } from "@/lib/useAppAuth";
 import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 import type { Customer, Invoice, Payment } from "@/lib/types";
 import { ArrowRight, X } from "lucide-react";
+import { useT } from "@/lib/useLang";
 
 const money = (n: number) => `$${n.toFixed(2)}`;
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -18,12 +19,13 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  */
 export default function PaymentHistory({ payments, invoices, customer }: { payments: Payment[]; invoices: Invoice[]; customer: Customer }) {
   const [fixing, setFixing] = useState<Payment | null>(null);
+  const t = useT();
   const byId = new Map(invoices.map((i) => [i.id, i]));
 
   return (
     <div className="space-y-2">
-      <h2 className="text-sm font-semibold text-slate-900">Payment history</h2>
-      {payments.length === 0 && <p className="text-sm text-slate-400 py-4 text-center">No payments yet.</p>}
+      <h2 className="text-sm font-semibold text-slate-900">{t("Payment history")}</h2>
+      {payments.length === 0 && <p className="text-sm text-slate-400 py-4 text-center">{t("No payments yet.")}</p>}
       {payments.map((p) => {
         const inv = p.invoiceId ? byId.get(p.invoiceId) : undefined;
         return (
@@ -41,31 +43,31 @@ export default function PaymentHistory({ payments, invoices, customer }: { payme
                       #{inv.invoiceNumber}
                     </Link>
                   ) : (
-                    <span className="font-medium text-sky-700">{p.unallocated ? "Credit" : "Invoice"}</span>
+                    <span className="font-medium text-sky-700">{p.unallocated ? t("Credit") : t("Invoice")}</span>
                   )}
-                  {p.kind === "adjustment" && <Tag cls="bg-amber-100 text-amber-800">Adjustment</Tag>}
-                  {p.cancelled && <Tag cls="bg-red-100 text-red-700">Cancelled</Tag>}
-                  {!p.cancelled && (p.history?.length ?? 0) > 0 && <Tag cls="bg-indigo-100 text-indigo-700">Edited</Tag>}
+                  {p.kind === "adjustment" && <Tag cls="bg-amber-100 text-amber-800">{t("Adjustment")}</Tag>}
+                  {p.cancelled && <Tag cls="bg-red-100 text-red-700">{t("Cancelled")}</Tag>}
+                  {!p.cancelled && (p.history?.length ?? 0) > 0 && <Tag cls="bg-indigo-100 text-indigo-700">{t("Edited")}</Tag>}
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
                   {new Date(p.paidAt ?? p.createdAt).toLocaleDateString()}
-                  {p.paidAt && new Date(p.paidAt).toDateString() !== new Date(p.createdAt).toDateString() ? ` (entered ${new Date(p.createdAt).toLocaleDateString()})` : ""}
-                  {p.method ? ` · ${p.method}` : ""}
+                  {p.paidAt && new Date(p.paidAt).toDateString() !== new Date(p.createdAt).toDateString() ? ` (${t("entered {date}", { date: new Date(p.createdAt).toLocaleDateString() })})` : ""}
+                  {p.method ? ` · ${t(p.method)}` : ""}
                   {p.by ? ` · ${p.by}` : ""}
                 </p>
-                {p.reason && <p className="text-xs text-slate-600 mt-0.5">Reason: {p.reason}</p>}
-                {p.note && <p className="text-xs text-slate-600 mt-0.5">Note: {p.note}</p>}
+                {p.reason && <p className="text-xs text-slate-600 mt-0.5">{t("Reason:")} {p.reason}</p>}
+                {p.note && <p className="text-xs text-slate-600 mt-0.5">{t("Note:")} {p.note}</p>}
               </div>
               {!p.cancelled && (
                 <button onClick={() => setFixing(p)} className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                  Fix
+                  {t("Fix")}
                 </button>
               )}
             </div>
             {(p.history ?? []).map((h, i) => (
               <p key={i} className="mt-2 rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs text-slate-600">
-                {h.action === "cancel" ? `Cancelled (was ${money(h.amountBefore)})` : `Changed ${money(h.amountBefore)} → ${money(h.amountAfter)}`} · {new Date(h.at).toLocaleString()}
-                {h.by ? ` · ${h.by}` : ""} · Reason: {h.reason}
+                {h.action === "cancel" ? t("Cancelled (was {amount})", { amount: money(h.amountBefore) }) : t("Changed {before} → {after}", { before: money(h.amountBefore), after: money(h.amountAfter) })} · {new Date(h.at).toLocaleString()}
+                {h.by ? ` · ${h.by}` : ""} · {t("Reason:")} {h.reason}
               </p>
             ))}
           </div>
@@ -86,6 +88,7 @@ function Tag({ cls, children }: { cls: string; children: React.ReactNode }) {
  */
 function FixPaymentModal({ payment, invoice, customer, onClose }: { payment: Payment; invoice?: Invoice; customer: Customer; onClose: () => void }) {
   const { authedFetch } = useAppAuth();
+  const t = useT();
   const [action, setAction] = useState<"edit" | "cancel">("edit");
   const [amount, setAmount] = useState(String(payment.amount));
   const [reason, setReason] = useState("");
@@ -103,15 +106,15 @@ function FixPaymentModal({ payment, invoice, customer, onClose }: { payment: Pay
   if (amountOk && invoice) {
     const paid = round2(invoice.amountPaid + delta);
     const balance = round2(invoice.total - paid);
-    if (delta > 0 && paid > invoice.total) problem = `That would pay invoice #${invoice.invoiceNumber} more than its total (${money(invoice.total)}).`;
+    if (delta > 0 && paid > invoice.total) problem = t("That would pay invoice #{n} more than its total ({amount}).", { n: invoice.invoiceNumber, amount: money(invoice.total) });
     preview = (
       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
-        <p className="text-xs text-slate-500 mb-1">Invoice #{invoice.invoiceNumber} (total {money(invoice.total)})</p>
+        <p className="text-xs text-slate-500 mb-1">{t("Invoice #{n} (total {amount})", { n: invoice.invoiceNumber, amount: money(invoice.total) })}</p>
         <div className="flex flex-wrap items-center gap-2">
-          <span>Owes {money(invoice.balance)}</span>
+          <span>{t("Owes {amount}", { amount: money(invoice.balance) })}</span>
           <PaymentStatusBadge status={invoice.paymentStatus} />
           <ArrowRight size={14} className="text-slate-400" />
-          <span className="font-semibold">Owes {money(balance)}</span>
+          <span className="font-semibold">{t("Owes {amount}", { amount: money(balance) })}</span>
           <PaymentStatusBadge status={computePaymentStatus(invoice.total, paid, invoice.paymentStatus)} />
         </div>
       </div>
@@ -119,10 +122,10 @@ function FixPaymentModal({ payment, invoice, customer, onClose }: { payment: Pay
   } else if (amountOk && !payment.invoiceId) {
     const before = customer.credit ?? 0;
     const after = round2(before + delta);
-    if (after < 0) problem = `${customer.name} only has ${money(before)} credit left.`;
+    if (after < 0) problem = t("{name} only has {amount} credit left.", { name: customer.name, amount: money(before) });
     preview = (
       <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
-        Customer credit {money(before)} <ArrowRight size={14} className="inline text-slate-400" /> <span className="font-semibold">{money(after)}</span>
+        {t("Customer credit")} {money(before)} <ArrowRight size={14} className="inline text-slate-400" /> <span className="font-semibold">{money(after)}</span>
       </div>
     );
   }
@@ -140,7 +143,7 @@ function FixPaymentModal({ payment, invoice, customer, onClose }: { payment: Pay
       await changePaymentApi(authedFetch, payment.id, { action, ...(action === "edit" ? { amount: newAmount } : {}), reason: reason.trim() }, operationId);
       onClose();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to change the payment.");
+      setError(e instanceof Error ? t(e.message) : t("Failed to change the payment."));
       setConfirming(false);
     } finally {
       setSaving(false);
@@ -154,13 +157,13 @@ function FixPaymentModal({ payment, invoice, customer, onClose }: { payment: Pay
       <div className="w-full md:max-w-md max-h-[90vh] overflow-y-auto rounded-t-2xl md:rounded-2xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between mb-4">
           <div>
-            <h2 className="text-lg font-semibold text-slate-900">Fix {payment.kind === "adjustment" ? "adjustment" : "payment"}</h2>
+            <h2 className="text-lg font-semibold text-slate-900">{payment.kind === "adjustment" ? t("Fix adjustment") : t("Fix payment")}</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {money(payment.amount)} on {new Date(payment.createdAt).toLocaleDateString()}
-              {invoice ? ` → #${invoice.invoiceNumber}` : payment.unallocated ? " → credit" : ""}
+              {t("{amount} on {date}", { amount: money(payment.amount), date: new Date(payment.createdAt).toLocaleDateString() })}
+              {invoice ? ` → #${invoice.invoiceNumber}` : payment.unallocated ? ` → ${t("credit")}` : ""}
             </p>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100" aria-label="Close">
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100" aria-label={t("Close")}>
             <X size={18} />
           </button>
         </div>
@@ -175,7 +178,7 @@ function FixPaymentModal({ payment, invoice, customer, onClose }: { payment: Pay
               }}
               className={`flex-1 rounded-lg px-3 py-2 ${action === a ? (a === "cancel" ? "bg-red-600 text-white" : "bg-slate-900 text-white") : "text-slate-600"}`}
             >
-              {a === "edit" ? "Change amount" : "Cancel it"}
+              {a === "edit" ? t("Change amount") : t("Cancel it")}
             </button>
           ))}
         </div>
@@ -183,7 +186,7 @@ function FixPaymentModal({ payment, invoice, customer, onClose }: { payment: Pay
         <div className="space-y-3">
           {action === "edit" && (
             <div>
-              <label className="text-xs font-medium text-slate-600">Correct amount</label>
+              <label className="text-xs font-medium text-slate-600">{t("Correct amount")}</label>
               <input
                 type="number"
                 inputMode="decimal"
@@ -197,9 +200,9 @@ function FixPaymentModal({ payment, invoice, customer, onClose }: { payment: Pay
               />
             </div>
           )}
-          {action === "cancel" && <p className="text-sm text-slate-600">The payment stays in the history, crossed out. Its money goes back onto what is owed.</p>}
+          {action === "cancel" && <p className="text-sm text-slate-600">{t("The payment stays in the history, crossed out. Its money goes back onto what is owed.")}</p>}
           <div>
-            <label className="text-xs font-medium text-slate-600">Reason (required)</label>
+            <label className="text-xs font-medium text-slate-600">{t("Reason (required)")}</label>
             <input
               className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base"
               value={reason}
@@ -207,25 +210,25 @@ function FixPaymentModal({ payment, invoice, customer, onClose }: { payment: Pay
                 setReason(e.target.value);
                 reset();
               }}
-              placeholder="e.g. typed 500 instead of 50"
+              placeholder={t("e.g. typed 500 instead of 50")}
             />
           </div>
           {preview}
           {problem && <p className="text-sm text-red-600">{problem}</p>}
-          {confirming && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">Check the before → after above, then tap Confirm.</p>}
+          {confirming && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-700">{t("Check the before → after above, then tap Confirm.")}</p>}
           {error && <p className="text-sm text-red-600">{error}</p>}
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-lg px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-100">
-            Close
+            {t("Close")}
           </button>
           <button
             onClick={submit}
             disabled={saving || !valid}
             className={`rounded-lg px-4 py-2.5 text-sm font-medium text-white disabled:opacity-50 ${action === "cancel" ? "bg-red-600 hover:bg-red-700" : "bg-indigo-600 hover:bg-indigo-700"}`}
           >
-            {saving ? "Saving…" : confirming ? (action === "cancel" ? "Confirm cancel" : "Confirm change") : "Review"}
+            {saving ? t("Saving…") : confirming ? (action === "cancel" ? t("Confirm cancel") : t("Confirm change")) : t("Review")}
           </button>
         </div>
       </div>

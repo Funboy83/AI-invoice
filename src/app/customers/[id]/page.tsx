@@ -13,6 +13,7 @@ import PaymentStatusBadge from "@/components/PaymentStatusBadge";
 import { useAppAuth } from "@/lib/useAppAuth";
 import type { Customer, Invoice, Payment } from "@/lib/types";
 import { ArrowLeft, Pencil, Phone, ChevronRight, DollarSign, FileText } from "lucide-react";
+import { useT } from "@/lib/useLang";
 
 type Tab = "unpaid" | "paid" | "all";
 
@@ -21,6 +22,7 @@ export default function CustomerDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const { reportListenerError } = useAppAuth();
+  const t = useT();
   const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [invoices, setInvoices] = useState<Invoice[] | null>(null);
   const [tab, setTab] = useState<Tab>("unpaid");
@@ -45,23 +47,23 @@ export default function CustomerDetailPage() {
   const shown = summary[tab];
 
   if (customers === null || invoices === null) {
-    return <div className="p-8 text-center text-sm text-slate-400">Loading…</div>;
+    return <div className="p-8 text-center text-sm text-slate-400">{t("Loading…")}</div>;
   }
   if (!customer) {
     return (
       <div className="p-8 text-center text-sm text-slate-500 space-y-3">
-        <p>This customer was not found.</p>
+        <p>{t("This customer was not found.")}</p>
         <Link href="/customers" className="text-indigo-600">
-          Back to customers
+          {t("Back to customers")}
         </Link>
       </div>
     );
   }
 
   const tabs: { key: Tab; label: string; count: number }[] = [
-    { key: "unpaid", label: "Unpaid", count: summary.unpaid.length },
-    { key: "paid", label: "Paid", count: summary.paid.length },
-    { key: "all", label: "All", count: summary.all.length },
+    { key: "unpaid", label: t("Unpaid"), count: summary.unpaid.length },
+    { key: "paid", label: t("Paid"), count: summary.paid.length },
+    { key: "all", label: t("All"), count: summary.all.length },
   ];
   const back = `?back=${encodeURIComponent(`/customers/${customer.id}`)}`;
 
@@ -72,7 +74,7 @@ export default function CustomerDetailPage() {
           onClick={() => router.push("/customers")}
           className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"
         >
-          <ArrowLeft size={15} /> Customers
+          <ArrowLeft size={15} /> {t("Customers")}
         </button>
         <div className="flex items-center gap-2">
           {customer.phone && (
@@ -80,14 +82,14 @@ export default function CustomerDetailPage() {
               href={`tel:${customer.phone}`}
               className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              <Phone size={14} /> Call
+              <Phone size={14} /> {t("Call")}
             </a>
           )}
           <button
             onClick={() => setEditing(true)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
-            <Pencil size={14} /> Edit
+            <Pencil size={14} /> {t("Edit")}
           </button>
         </div>
       </div>
@@ -95,7 +97,7 @@ export default function CustomerDetailPage() {
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">{customer.name}</h1>
         <p className="text-sm text-slate-500 mt-1">
-          {[customer.contactName, customer.phone, customer.address].filter(Boolean).join(" · ") || "No contact info"}
+          {[customer.contactName, customer.phone, customer.address].filter(Boolean).join(" · ") || t("No contact info")}
         </p>
         {customer.notes && <p className="text-sm text-slate-600 mt-2 whitespace-pre-line">{customer.notes}</p>}
       </div>
@@ -105,7 +107,7 @@ export default function CustomerDetailPage() {
         href={`/customers/${customer.id}/payment-request`}
         className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white shadow-sm hover:bg-emerald-700 md:w-auto md:inline-flex"
       >
-        <FileText size={18} /> Payment request (combine invoices)
+        <FileText size={18} /> {t("Payment request (combine invoices)")}
       </Link>
 
       {/* Balance summary: the numbers to chase. */}
@@ -115,26 +117,26 @@ export default function CustomerDetailPage() {
             summary.totalOwed > 0 ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"
           }`}
         >
-          <p className={`text-xs font-medium uppercase ${summary.totalOwed > 0 ? "text-amber-700" : "text-emerald-700"}`}>Total owed</p>
+          <p className={`text-xs font-medium uppercase ${summary.totalOwed > 0 ? "text-amber-700" : "text-emerald-700"}`}>{t("Total owed")}</p>
           <p className={`text-2xl font-semibold mt-1 ${summary.totalOwed > 0 ? "text-amber-800" : "text-emerald-800"}`}>
             ${summary.totalOwed.toFixed(2)}
           </p>
           <p className="text-xs text-slate-600 mt-1">
             {summary.unpaid.length === 0
-              ? "All paid up"
-              : `${summary.unpaid.length} unpaid invoice${summary.unpaid.length > 1 ? "s" : ""}`}
+              ? t("All paid up")
+              : t(summary.unpaid.length > 1 ? "{n} unpaid invoices" : "{n} unpaid invoice", { n: summary.unpaid.length })}
           </p>
           {(customer.credit ?? 0) > 0 && (
-            <p className="text-xs font-medium text-sky-700 mt-1">Credit ${customer.credit!.toFixed(2)} (paid extra)</p>
+            <p className="text-xs font-medium text-sky-700 mt-1">{t("Credit ${amount} (paid extra)", { amount: customer.credit!.toFixed(2) })}</p>
           )}
         </div>
         <SummaryCard
-          label="Oldest unpaid"
-          value={summary.oldestUnpaidDate ? `${daysSince(summary.oldestUnpaidDate)} days` : "—"}
-          sub={summary.oldestUnpaidDate ? new Date(summary.oldestUnpaidDate).toLocaleDateString() : "Nothing waiting"}
+          label={t("Oldest unpaid")}
+          value={summary.oldestUnpaidDate ? t("{n} days", { n: daysSince(summary.oldestUnpaidDate) }) : "—"}
+          sub={summary.oldestUnpaidDate ? new Date(summary.oldestUnpaidDate).toLocaleDateString() : t("Nothing waiting")}
         />
-        <SummaryCard label="Total billed" value={`$${summary.totalBilled.toFixed(2)}`} sub={`${summary.unpaid.length + summary.paid.length} invoices`} />
-        <SummaryCard label="Total paid" value={`$${summary.totalPaid.toFixed(2)}`} sub={`${summary.paid.length} fully paid`} />
+        <SummaryCard label={t("Total billed")} value={`$${summary.totalBilled.toFixed(2)}`} sub={t("{n} invoices", { n: summary.unpaid.length + summary.paid.length })} />
+        <SummaryCard label={t("Total paid")} value={`$${summary.totalPaid.toFixed(2)}`} sub={t("{n} fully paid", { n: summary.paid.length })} />
       </div>
 
       <div className="flex gap-2">
@@ -142,33 +144,33 @@ export default function CustomerDetailPage() {
           onClick={() => setPaying("payment")}
           className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-4 py-3 text-base font-semibold text-white hover:bg-emerald-700 active:bg-emerald-800"
         >
-          <DollarSign size={18} /> Record payment
+          <DollarSign size={18} /> {t("Record payment")}
         </button>
         <button
           onClick={() => setPaying("adjustment")}
           disabled={summary.totalOwed <= 0}
           className="shrink-0 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-40"
         >
-          Adjust debt
+          {t("Adjust debt")}
         </button>
       </div>
 
       {/* Unpaid / Paid / All */}
       <div className="flex rounded-xl border border-slate-200 bg-white p-1 text-sm font-medium">
-        {tabs.map((t) => (
+        {tabs.map((tb) => (
           <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
+            key={tb.key}
+            onClick={() => setTab(tb.key)}
             className={`flex-1 rounded-lg px-3 py-2 ${
-              tab === t.key ? (t.key === "unpaid" ? "bg-amber-500 text-white" : t.key === "paid" ? "bg-emerald-600 text-white" : "bg-slate-900 text-white") : "text-slate-600"
+              tab === tb.key ? (tb.key === "unpaid" ? "bg-amber-500 text-white" : tb.key === "paid" ? "bg-emerald-600 text-white" : "bg-slate-900 text-white") : "text-slate-600"
             }`}
           >
-            {t.label} ({t.count})
+            {tb.label} ({tb.count})
           </button>
         ))}
       </div>
       {tab === "unpaid" && summary.unpaid.length > 0 && (
-        <p className="text-xs text-slate-500 -mt-2">Oldest first. A payment from Record payment pays these from the top down.</p>
+        <p className="text-xs text-slate-500 -mt-2">{t("Oldest first. A payment from Record payment pays these from the top down.")}</p>
       )}
 
       <div className="space-y-2">
@@ -186,14 +188,14 @@ export default function CustomerDetailPage() {
               </div>
               <p className="text-xs text-slate-500 mt-1">
                 {new Date(inv.date).toLocaleDateString()}
-                {(inv.paymentStatus === "unpaid" || inv.paymentStatus === "partial") && ` · ${daysSince(inv.date)} days ago`}
+                {(inv.paymentStatus === "unpaid" || inv.paymentStatus === "partial") && ` · ${t("{n} days ago", { n: daysSince(inv.date) })}`}
               </p>
             </div>
             <div className="text-right text-sm">
               <p className="font-semibold text-slate-900">${inv.total.toFixed(2)}</p>
-              {inv.paymentStatus === "partial" && <p className="text-xs text-slate-500">Paid ${inv.amountPaid.toFixed(2)}</p>}
+              {inv.paymentStatus === "partial" && <p className="text-xs text-slate-500">{t("Paid ${amount}", { amount: inv.amountPaid.toFixed(2) })}</p>}
               {(inv.paymentStatus === "unpaid" || inv.paymentStatus === "partial") && (
-                <p className="text-xs font-medium text-amber-700">Owes ${inv.balance.toFixed(2)}</p>
+                <p className="text-xs font-medium text-amber-700">{t("Owes ${amount}", { amount: inv.balance.toFixed(2) })}</p>
               )}
             </div>
             <ChevronRight size={16} className="shrink-0 text-slate-400" />
@@ -201,7 +203,7 @@ export default function CustomerDetailPage() {
         ))}
         {shown.length === 0 && (
           <p className="text-center text-sm text-slate-400 py-10">
-            {tab === "unpaid" ? "No unpaid invoices." : tab === "paid" ? "No paid invoices yet." : "No invoices yet."}
+            {tab === "unpaid" ? t("No unpaid invoices.") : tab === "paid" ? t("No paid invoices yet.") : t("No invoices yet.")}
           </p>
         )}
       </div>

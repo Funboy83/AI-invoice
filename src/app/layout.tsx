@@ -7,6 +7,7 @@ import BottomNav from "@/components/BottomNav";
 import RequireAuth from "@/components/RequireAuth";
 import { AppAuthProvider } from "@/lib/useAppAuth";
 import { AiChatProvider } from "@/lib/useAiChat";
+import { LangProvider } from "@/lib/useLang";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -52,10 +53,11 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
-      lang="en"
+      lang="vi"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full h-full flex bg-slate-50 text-slate-900 overscroll-none">
+        <LangProvider>
         <AppAuthProvider>
           <Sidebar />
           {/*
@@ -72,6 +74,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           </RequireAuth>
           <BottomNav />
         </AppAuthProvider>
+        </LangProvider>
       </body>
     </html>
   );

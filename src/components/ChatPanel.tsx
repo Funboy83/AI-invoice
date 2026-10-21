@@ -6,6 +6,8 @@ import clsx from "clsx";
 import { useAiChat } from "@/lib/useAiChat";
 import { useAppAuth } from "@/lib/useAppAuth";
 import ChatThread from "./ChatThread";
+import LanguageSwitch from "./LanguageSwitch";
+import { useT } from "@/lib/useLang";
 
 /**
  * Desktop-only floating AI chat drawer. On mobile the AI is the full-screen home tab instead (see MobileChatHome).
@@ -27,6 +29,7 @@ export default function ChatPanel() {
   });
   const { email, signOut } = useAppAuth();
   const { input, setInput, send, busy } = useAiChat();
+  const t = useT();
 
   return (
     <>
@@ -36,7 +39,7 @@ export default function ChatPanel() {
           className="hidden md:flex print:hidden fixed bottom-6 right-6 z-40 items-center gap-2 rounded-full bg-indigo-600 px-5 py-3 text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700 transition-colors"
         >
           {busy ? <Loader2 size={18} className="animate-spin" /> : <Sparkles size={18} />}
-          <span className="text-sm font-medium">{busy ? "Đang xử lý…" : "Ask AI"}</span>
+          <span className="text-sm font-medium">{busy ? t("Working…") : t("Ask AI")}</span>
         </button>
       )}
 
@@ -52,13 +55,14 @@ export default function ChatPanel() {
               <Bot size={16} />
             </div>
             <div>
-              <p className="text-sm font-semibold text-slate-900">AI Secretary</p>
-              <p className="text-[11px] text-slate-500">Invoices · Products · Customers</p>
+              <p className="text-sm font-semibold text-slate-900">{t("AI Secretary")}</p>
+              <p className="text-[11px] text-slate-500">{t("Invoices · Products · Customers")}</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <LanguageSwitch />
             <button onClick={() => signOut()} title={email ?? undefined} className="text-[11px] text-slate-400 hover:text-slate-700">
-              Đăng xuất
+              {t("Sign out")}
             </button>
             <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-700">
               <X size={18} />
@@ -80,7 +84,7 @@ export default function ChatPanel() {
                 }
               }}
               rows={1}
-              placeholder="vd: Tạo invoice cho Hoa Lee 10 thùng milo 29"
+              placeholder={t("e.g. Make an invoice for Hoa Lee 10 cases milo 29")}
               className="flex-1 resize-none rounded-xl border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 max-h-28"
             />
             <button

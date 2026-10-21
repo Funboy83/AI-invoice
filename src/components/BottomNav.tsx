@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Sparkles, FileText, FileStack, Users, Boxes, ShoppingCart } from "lucide-react";
 import clsx from "clsx";
+import { useT } from "@/lib/useLang";
 
 // Same per-section colors as the desktop sidebar; the active tab lights up in its own color.
 const tabs = [
@@ -17,6 +18,7 @@ const tabs = [
 
 export default function BottomNav() {
   const pathname = usePathname();
+  const t = useT();
 
   return (
     <nav className="md:hidden print:hidden fixed bottom-0 inset-x-0 z-40 bg-white border-t border-slate-200 pb-[env(safe-area-inset-bottom)]">
@@ -35,7 +37,7 @@ export default function BottomNav() {
               <span className={clsx("rounded-full px-3 py-0.5", active && pill)}>
                 <Icon size={20} />
               </span>
-              {label}
+              {t(label)}
             </Link>
           );
         })}
