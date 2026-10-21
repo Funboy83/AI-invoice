@@ -7,7 +7,8 @@ import ChatFilterBanner from "@/components/ChatFilterBanner";
 import ProductFormModal from "@/components/ProductFormModal";
 import { useAppAuth } from "@/lib/useAppAuth";
 import type { Product } from "@/lib/types";
-import { Plus, Pencil, ChevronRight } from "lucide-react";
+import { normalizeVN } from "@/lib/similarity";
+import { Plus, Pencil, ChevronRight, Search } from "lucide-react";
 
 // useSearchParams (filters opened from a chat shortcut) needs a Suspense boundary to build.
 export default function ProductsPage() {
@@ -26,13 +27,23 @@ function ProductsPageContent() {
   // Inactive products stay hidden unless the "Show inactive" toggle is on (a chat link to one product still shows it).
   const [showInactive, setShowInactive] = useState(false);
   const inactiveCount = allProducts.filter((p) => !p.active).length;
+  // Search box: matches name, aliases or category, ignoring accents and case ("banh mi" finds "Bánh mì").
+  const [search, setSearch] = useState("");
+  const q = normalizeVN(search);
+  const matchesSearch = (p: Product) =>
+    !q || [p.name, p.category ?? "", ...p.aliases].some((t) => normalizeVN(t).includes(q));
   const products = focusId
     ? allProducts.filter((p) => p.id === focusId)
-    : showInactive
-      ? allProducts
-      : allProducts.filter((p) => p.active);
+    : allProducts.filter((p) => (showInactive || p.active) && matchesSearch(p));
+  const hiddenMatches = !focusId && !showInactive ? allProducts.filter((p) => !p.active && matchesSearch(p)).length : 0;
   const emptyMessage =
-    !showInactive && inactiveCount > 0 ? "No active products. Tap \"Show inactive\" to see hidden ones." : null;
+    hiddenMatches > 0
+      ? q
+        ? "No active products match. Tap \"Show inactive\" to see hidden ones."
+        : "No active products. Tap \"Show inactive\" to see hidden ones."
+      : q
+        ? "No products match."
+        : null;
 
   // null = closed; "new" = Add product; a product = editing it (the same form the product page's Edit opens).
   const [editing, setEditing] = useState<Product | "new" | null>(null);
@@ -61,10 +72,19 @@ function ProductsPageContent() {
       {focusId && <ChatFilterBanner label="Đang xem sản phẩm mở từ chat" clearHref="/products" />}
 
       {!focusId && (
-        <div className="flex justify-end">
+        <div className="flex flex-col sm:flex-row gap-2">
+          <label className="flex flex-1 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 focus-within:ring-2 focus-within:ring-indigo-500">
+            <Search size={16} className="text-slate-400" />
+            <input
+              className="w-full py-2.5 text-base focus:outline-none"
+              placeholder="Search name, nickname or category"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </label>
           <button
             onClick={() => setShowInactive((v) => !v)}
-            className={`rounded-full border px-3 py-1.5 text-sm font-medium ${
+            className={`whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-medium ${
               showInactive
                 ? "border-indigo-600 bg-indigo-50 text-indigo-700"
                 : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
