@@ -93,7 +93,8 @@ function hydrateProduct(id: string, data: Record<string, unknown>): Product {
     category: data.category as string | undefined,
     defaultUnit: (data.defaultUnit as string) ?? "unit",
     defaultPrice: (data.defaultPrice as number) ?? 0,
-    cost: data.cost as number | undefined,
+    // A product added without a cost is saved with cost null; the app only ever sees undefined ("not set").
+    cost: typeof data.cost === "number" ? data.cost : undefined,
     // Untracked stock is saved as null (or missing); both mean "not counted", so the app only ever sees undefined.
     quantity: typeof data.quantity === "number" ? data.quantity : undefined,
     active: (data.active as boolean) ?? true,
