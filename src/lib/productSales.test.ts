@@ -79,3 +79,19 @@ describe("productSales", () => {
     expect(totals.mixedUnits).toBe(true);
   });
 });
+
+describe("productSales with old or incomplete invoice lines", () => {
+  it("does not crash on a line with no name, quantity or total", () => {
+    const inv = {
+      id: "x1",
+      invoiceNumber: "7",
+      date: 1,
+      customerName: "A",
+      items: [{ productName: undefined, quantity: undefined, lineTotal: undefined, unit: "" }, { productId: "p1", productName: "Mi", quantity: 2, lineTotal: 10, price: 5, unit: "thùng" }],
+      paymentStatus: "unpaid",
+    } as unknown as Parameters<typeof productSales>[0][number];
+    const s = productSales([inv], { id: "p1", name: "Mi" });
+    expect(s.rows).toHaveLength(1);
+    expect(s.totals.amount).toBe(10);
+  });
+});

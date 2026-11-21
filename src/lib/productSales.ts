@@ -33,7 +33,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
  */
 function isLineFor(line: InvoiceLineItem, product: { id: string; name: string }): boolean {
   if (line.productId) return line.productId === product.id;
-  return normalizeVN(line.productName) === normalizeVN(product.name);
+  return normalizeVN(line.productName ?? "") === normalizeVN(product.name ?? "");
 }
 
 /**
@@ -43,22 +43,22 @@ function isLineFor(line: InvoiceLineItem, product: { id: string; name: string })
 export function productSales(invoices: Invoice[], product: { id: string; name: string; defaultUnit?: string }): ProductSales {
   const rows: ProductSaleRow[] = [];
   for (const inv of invoices) {
-    const lines = inv.items.filter((l) => isLineFor(l, product));
+    const lines = (inv.items ?? []).filter((l) => l && isLineFor(l, product));
     if (lines.length === 0) continue;
     const units = [...new Set(lines.map((l) => l.unit).filter(Boolean))];
     const prices = new Set(lines.map((l) => l.price));
     rows.push({
       invoiceId: inv.id,
-      invoiceNumber: inv.invoiceNumber,
+      invoiceNumber: String(inv.invoiceNumber ?? ""),
       date: inv.date,
       customerId: inv.customerId,
-      customerName: inv.customerName,
+      customerName: inv.customerName ?? "",
       status: inv.paymentStatus,
       ...(inv.delivery ? { delivery: inv.delivery.status } : {}),
-      quantity: r2(lines.reduce((s, l) => s + l.quantity, 0)),
+      quantity: r2(lines.reduce((s, l) => s + (Number(l.quantity) || 0), 0)),
       unit: units.join(", "),
       ...(prices.size === 1 ? { price: lines[0].price } : {}),
-      lineTotal: r2(lines.reduce((s, l) => s + l.lineTotal, 0)),
+      lineTotal: r2(lines.reduce((s, l) => s + (Number(l.lineTotal) || 0), 0)),
     });
   }
   rows.sort((a, b) => b.date - a.date || b.invoiceNumber.localeCompare(a.invoiceNumber, undefined, { numeric: true }));
